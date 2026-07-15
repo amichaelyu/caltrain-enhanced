@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		985B339B2DFD2F25008AD78F /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 985B339A2DFD2F25008AD78F /* WidgetKit.framework */; };
+		985B339D2DFD2F25008AD78F /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 985B339C2DFD2F25008AD78F /* SwiftUI.framework */; };
+		985B33AE2DFD2F25008AD78F /* widgetExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 985B33982DFD2F25008AD78F /* widgetExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		985B33782DFD2F16008AD78F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,13 +27,47 @@
 			remoteGlobalIDString = 985B33692DFD2F16008AD78F;
 			remoteInfo = "caltrain-enhanced";
 		};
+		985B33AC2DFD2F25008AD78F /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 985B33622DFD2F16008AD78F /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 985B33972DFD2F25008AD78F;
+			remoteInfo = widgetExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		985B33B32DFD2F25008AD78F /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				985B33AE2DFD2F25008AD78F /* widgetExtension.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		985B336A2DFD2F16008AD78F /* caltrain-enhanced.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "caltrain-enhanced.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		985B33772DFD2F16008AD78F /* caltrain-enhancedTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "caltrain-enhancedTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 		985B33812DFD2F16008AD78F /* caltrain-enhancedUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "caltrain-enhancedUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+		985B33982DFD2F25008AD78F /* widgetExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = widgetExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		985B339A2DFD2F25008AD78F /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
+		985B339C2DFD2F25008AD78F /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		985B33AF2DFD2F25008AD78F /* Exceptions for "widget" folder in "widgetExtension" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 985B33972DFD2F25008AD78F /* widgetExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		985B336C2DFD2F16008AD78F /* caltrain-enhanced */ = {
@@ -43,6 +83,14 @@
 		985B33842DFD2F16008AD78F /* caltrain-enhancedUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = "caltrain-enhancedUITests";
+			sourceTree = "<group>";
+		};
+		985B339E2DFD2F25008AD78F /* widget */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				985B33AF2DFD2F25008AD78F /* Exceptions for "widget" folder in "widgetExtension" target */,
+			);
+			path = widget;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -69,6 +117,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		985B33952DFD2F25008AD78F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				985B339D2DFD2F25008AD78F /* SwiftUI.framework in Frameworks */,
+				985B339B2DFD2F25008AD78F /* WidgetKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -78,6 +135,8 @@
 				985B336C2DFD2F16008AD78F /* caltrain-enhanced */,
 				985B337A2DFD2F16008AD78F /* caltrain-enhancedTests */,
 				985B33842DFD2F16008AD78F /* caltrain-enhancedUITests */,
+				985B339E2DFD2F25008AD78F /* widget */,
+				985B33992DFD2F25008AD78F /* Frameworks */,
 				985B336B2DFD2F16008AD78F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,8 +147,18 @@
 				985B336A2DFD2F16008AD78F /* caltrain-enhanced.app */,
 				985B33772DFD2F16008AD78F /* caltrain-enhancedTests.xctest */,
 				985B33812DFD2F16008AD78F /* caltrain-enhancedUITests.xctest */,
+				985B33982DFD2F25008AD78F /* widgetExtension.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		985B33992DFD2F25008AD78F /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				985B339A2DFD2F25008AD78F /* WidgetKit.framework */,
+				985B339C2DFD2F25008AD78F /* SwiftUI.framework */,
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -102,10 +171,12 @@
 				985B33662DFD2F16008AD78F /* Sources */,
 				985B33672DFD2F16008AD78F /* Frameworks */,
 				985B33682DFD2F16008AD78F /* Resources */,
+				985B33B32DFD2F25008AD78F /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				985B33AD2DFD2F25008AD78F /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				985B336C2DFD2F16008AD78F /* caltrain-enhanced */,
@@ -163,6 +234,28 @@
 			productReference = 985B33812DFD2F16008AD78F /* caltrain-enhancedUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		985B33972DFD2F25008AD78F /* widgetExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 985B33B02DFD2F25008AD78F /* Build configuration list for PBXNativeTarget "widgetExtension" */;
+			buildPhases = (
+				985B33942DFD2F25008AD78F /* Sources */,
+				985B33952DFD2F25008AD78F /* Frameworks */,
+				985B33962DFD2F25008AD78F /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				985B339E2DFD2F25008AD78F /* widget */,
+			);
+			name = widgetExtension;
+			packageProductDependencies = (
+			);
+			productName = widgetExtension;
+			productReference = 985B33982DFD2F25008AD78F /* widgetExtension.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -171,7 +264,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1640;
-				LastUpgradeCheck = 1640;
+				LastUpgradeCheck = 2660;
 				TargetAttributes = {
 					985B33692DFD2F16008AD78F = {
 						CreatedOnToolsVersion = 16.4;
@@ -183,6 +276,9 @@
 					985B33802DFD2F16008AD78F = {
 						CreatedOnToolsVersion = 16.4;
 						TestTargetID = 985B33692DFD2F16008AD78F;
+					};
+					985B33972DFD2F25008AD78F = {
+						CreatedOnToolsVersion = 16.4;
 					};
 				};
 			};
@@ -203,6 +299,7 @@
 				985B33692DFD2F16008AD78F /* caltrain-enhanced */,
 				985B33762DFD2F16008AD78F /* caltrain-enhancedTests */,
 				985B33802DFD2F16008AD78F /* caltrain-enhancedUITests */,
+				985B33972DFD2F25008AD78F /* widgetExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -223,6 +320,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		985B337F2DFD2F16008AD78F /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		985B33962DFD2F25008AD78F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,6 +357,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		985B33942DFD2F25008AD78F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +376,11 @@
 			isa = PBXTargetDependency;
 			target = 985B33692DFD2F16008AD78F /* caltrain-enhanced */;
 			targetProxy = 985B33822DFD2F16008AD78F /* PBXContainerItemProxy */;
+		};
+		985B33AD2DFD2F25008AD78F /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 985B33972DFD2F25008AD78F /* widgetExtension */;
+			targetProxy = 985B33AC2DFD2F25008AD78F /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -328,6 +444,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -385,6 +502,7 @@
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -395,13 +513,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "caltrain-enhanced/caltrain-enhanced.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SNC2X5N2CY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "This app uses your location to find the nearest Caltrain station and update your widget with real-time train information even when the app is not active.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to find the nearest Caltrain station and show you real-time train information.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -423,13 +545,17 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = "caltrain-enhanced/caltrain-enhanced.entitlements";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = SNC2X5N2CY;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "This app uses your location to find the nearest Caltrain station and update your widget with real-time train information even when the app is not active.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "This app uses your location to find the nearest Caltrain station and show you real-time train information.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UIBackgroundModes = location;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -518,6 +644,62 @@
 			};
 			name = Release;
 		};
+		985B33B12DFD2F25008AD78F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = widget/widget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SNC2X5N2CY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = widget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = widget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.michaelyu.caltrain-enhanced.widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		985B33B22DFD2F25008AD78F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ASSETCATALOG_COMPILER_WIDGET_BACKGROUND_COLOR_NAME = WidgetBackground;
+				CODE_SIGN_ENTITLEMENTS = widget/widget.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = SNC2X5N2CY;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = widget/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = widget;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.michaelyu.caltrain-enhanced.widget";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -553,6 +735,15 @@
 			buildConfigurations = (
 				985B33922DFD2F16008AD78F /* Debug */,
 				985B33932DFD2F16008AD78F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		985B33B02DFD2F25008AD78F /* Build configuration list for PBXNativeTarget "widgetExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				985B33B12DFD2F25008AD78F /* Debug */,
+				985B33B22DFD2F25008AD78F /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
