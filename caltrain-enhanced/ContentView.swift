@@ -20,6 +20,70 @@ private enum Metrics {
     static let hairline: CGFloat = 0.5
 }
 
+/// Service tier, derived from the timetable's free-form `type` string. The embedded
+/// schedule only ever uses "Local Weekday"/"Local Weekend", "Limited", "Express" and
+/// "South County" — anything unrecognized falls back to Local.
+enum TrainClass {
+    case express, limited, southCounty, local
+
+    init(_ rawType: String?) {
+        guard let rawType else { self = .local; return }
+        if rawType.localizedCaseInsensitiveContains("Express") { self = .express }
+        else if rawType.localizedCaseInsensitiveContains("Limited") { self = .limited }
+        else if rawType.localizedCaseInsensitiveContains("South County") { self = .southCounty }
+        else { self = .local }
+    }
+
+    var label: String {
+        switch self {
+        case .express: "Express"
+        case .limited: "Limited"
+        case .southCounty: "S. County"
+        case .local: "Local"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .express: Color.caltrainRed
+        case .limited: Color(red: 0.16, green: 0.58, blue: 0.85)
+        case .southCounty: Color(red: 0.90, green: 0.49, blue: 0.07)
+        case .local: Color.secondary
+        }
+    }
+}
+
+/// Tinted pill marking a train's service tier. Uses a translucent fill rather than a
+/// solid one so it reads the same in light and dark mode.
+private struct TrainTypeBadge: View {
+    let trainClass: TrainClass
+
+    var body: some View {
+        Text(trainClass.label)
+            .font(.system(size: 10, weight: .bold, design: .rounded))
+            .textCase(.uppercase)
+            .tracking(0.6)
+            .foregroundStyle(trainClass.color)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule(style: .continuous).fill(trainClass.color.opacity(0.14)))
+            .overlay(Capsule(style: .continuous)
+                .strokeBorder(trainClass.color.opacity(0.30), lineWidth: Metrics.hairline))
+    }
+}
+
+/// Bare color dot for the narrow "Later departures" columns, where a labeled pill
+/// eats enough width to wrap the departure time onto two lines.
+private struct TrainTypeDot: View {
+    let trainClass: TrainClass
+
+    var body: some View {
+        Circle()
+            .fill(trainClass.color)
+            .frame(width: 6, height: 6)
+    }
+}
+
 // MARK: - Root
 
 struct ContentView: View {
@@ -29,6 +93,7 @@ struct ContentView: View {
     @State private var southbound: [NextTrainInfo] = []
     @State private var travelTimes: TravelTimes?
     @State private var now = Date()
+    @State private var showSettings = false
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -42,9 +107,7 @@ struct ContentView: View {
                 } else if let station = location.nearestStation {
                     DepartureBoard(northbound: northbound.first, southbound: southbound.first)
 
-                    TravelTimesStrip(times: travelTimes,
-                                     hasLocation: location.userLocation != nil,
-                                     stationName: station.name)
+                    TravelTimesStrip(times: travelTimes, station: station)
 
                     upcomingSection
                 } else {
@@ -56,6 +119,9 @@ struct ContentView: View {
             .padding(.bottom, 40)
         }
         .background(Color(.systemGroupedBackground))
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
+        }
         .onAppear {
             location.requestLocation()
             location.startContinuousLocationUpdates()
@@ -76,24 +142,39 @@ struct ContentView: View {
     // MARK: Sections
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Caltrain")
-                .font(.caption)
-                .textCase(.uppercase)
-                .tracking(2)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Caltrain")
+                    .font(.caption)
+                    .textCase(.uppercase)
+                    .tracking(2)
+                    .foregroundStyle(.secondary)
 
-            HStack(spacing: 8) {
-                Image(systemName: "location.fill")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Color.caltrainRed)
-                Text(location.nearestStation?.name ?? "Locating…")
-                    .font(.system(size: 30, weight: .bold, design: .rounded))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.7)
+                HStack(spacing: 8) {
+                    Image(systemName: "location.fill")
+                        .font(.system(size: 15))
+                        .foregroundStyle(Color.caltrainRed)
+                    Text(location.nearestStation?.name ?? "Locating…")
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 38, height: 38)
+                    .background(
+                        Circle().fill(Color(.secondarySystemGroupedBackground))
+                    )
+            }
+            .accessibilityLabel("Settings")
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var upcomingSection: some View {
@@ -201,9 +282,12 @@ private struct DepartureRow: View {
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
 
                 if let train {
-                    Text("\(train.arrivalTime) · #\(train.trainNumber)\(train.trainType.map { " · \(shortType($0))" } ?? "")")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    HStack(spacing: 7) {
+                        Text("\(train.arrivalTime) · #\(train.trainNumber)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        TrainTypeBadge(trainClass: TrainClass(train.trainType))
+                    }
                 } else {
                     Text("No more trains today")
                         .font(.footnote)
@@ -240,21 +324,19 @@ private struct DepartureRow: View {
                 .foregroundStyle(.tertiary)
         }
     }
-
-    private func shortType(_ type: String) -> String {
-        if type.localizedCaseInsensitiveContains("Express") { return "Express" }
-        if type.localizedCaseInsensitiveContains("Limited") { return "Limited" }
-        if type.localizedCaseInsensitiveContains("South County") { return "S. County" }
-        return "Local"
-    }
 }
 
 // MARK: - Travel times
 
 private struct TravelTimesStrip: View {
     let times: TravelTimes?
-    let hasLocation: Bool
-    let stationName: String
+    let station: CaltrainStation
+
+    @AppStorage(MapsProvider.storageKey) private var mapsProviderRaw = MapsProvider.apple.rawValue
+
+    private var provider: MapsProvider {
+        MapsProvider(rawValue: mapsProviderRaw) ?? .apple
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -269,11 +351,18 @@ private struct TravelTimesStrip: View {
             }
 
             HStack(spacing: 12) {
-                TravelTile(systemImage: "figure.walk", label: "Walk", minutes: times?.walkingMinutes)
-                TravelTile(systemImage: "bicycle", label: "Bike", minutes: times?.bikingMinutes)
-                TravelTile(systemImage: "car.fill", label: "Drive", minutes: times?.drivingMinutes)
+                TravelTile(systemImage: "figure.walk", label: "Walk",
+                           minutes: times?.walkingMinutes, action: { navigate(.walking) })
+                TravelTile(systemImage: "bicycle", label: "Bike",
+                           minutes: times?.bikingMinutes, action: { navigate(.cycling) })
+                TravelTile(systemImage: "car.fill", label: "Drive",
+                           minutes: times?.drivingMinutes, action: { navigate(.driving) })
             }
         }
+    }
+
+    private func navigate(_ mode: TravelMode) {
+        MapsLauncher.openDirections(to: station, mode: mode, using: provider)
     }
 }
 
@@ -281,8 +370,15 @@ private struct TravelTile: View {
     let systemImage: String
     let label: String
     let minutes: Int?
+    let action: () -> Void
 
     var body: some View {
+        Button(action: action) { tile }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(label) directions to the station")
+    }
+
+    private var tile: some View {
         VStack(spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 18))
@@ -332,11 +428,14 @@ private struct UpcomingColumn: View {
                 Text("—").foregroundStyle(.tertiary).font(.subheadline)
             } else {
                 ForEach(trains) { train in
-                    HStack {
+                    HStack(spacing: 6) {
+                        TrainTypeDot(trainClass: TrainClass(train.trainType))
                         Text(train.arrivalTime)
                             .font(.system(size: 15, weight: .medium, design: .rounded))
                             .monospacedDigit()
-                        Spacer(minLength: 6)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Spacer(minLength: 4)
                         Text("\(train.minutesUntilArrival)m")
                             .font(.footnote)
                             .monospacedDigit()
