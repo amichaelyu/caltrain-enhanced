@@ -80,6 +80,15 @@ struct NextTrainInfo: Identifiable {
     let direction: String
 }
 
+/// One row of the full-day timetable sheet.
+struct TimetableEntry: Identifiable {
+    let id = UUID()
+    let trainNumber: String
+    let trainType: String?
+    let departureTime: String      // display formatted, e.g. "5:07 AM"
+    let hasDeparted: Bool
+}
+
 struct BidirectionalTrainInfo {
     let northbound: NextTrainInfo?
     let southbound: NextTrainInfo?
@@ -187,16 +196,72 @@ final class CaltrainService {
         return (Array(northbound.prefix(limit)), Array(southbound.prefix(limit)))
     }
 
+    /// Every departure from `stationName` in one direction, for the service day that
+    /// `date` falls in, ordered first train to last. Trains that have already left are
+    /// included and flagged via `hasDeparted` so the timetable shows the whole day.
+    func fullTimetable(from stationName: String, northbound: Bool, on date: Date = Date()) -> [TimetableEntry] {
+        let calendar = Calendar.current
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        let wantsWeekend = calendar.isDateInWeekend(Self.operatingDay(for: date))
+        let nowMinutes = Self.serviceMinutes(hour: hour, minute: minute)
+
+        var rows: [(minutes: Int, entry: TimetableEntry)] = []
+        for schedule in schedules {
+            guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == wantsWeekend,
+                  schedule.direction.localizedCaseInsensitiveContains("North") == northbound
+            else { continue }
+
+            for train in schedule.trains {
+                guard let timeStr = train.stops[stationName],
+                      let (h, m) = Self.parseTime(timeStr) else { continue }
+                let minutes = Self.serviceMinutes(hour: h, minute: m)
+                rows.append((minutes, TimetableEntry(
+                    trainNumber: train.trainNo,
+                    trainType: train.type,
+                    departureTime: Self.displayTime(timeStr),
+                    hasDeparted: minutes <= nowMinutes
+                )))
+            }
+        }
+        return rows.sorted { $0.minutes < $1.minutes }.map(\.entry)
+    }
+
+    /// Which service is running right now — before ~3am we are still on the previous
+    /// operating day, so a 1am Saturday train runs on Friday's weekday schedule.
+    static func serviceLabel(for date: Date = Date()) -> String {
+        Calendar.current.isDateInWeekend(operatingDay(for: date)) ? "Weekend service" : "Weekday service"
+    }
+
+    /// Stop times before this hour physically occur the day *after* their operating day.
+    private static let serviceDayStartHour = 3
+
+    private static func operatingDay(for date: Date) -> Date {
+        let calendar = Calendar.current
+        guard calendar.component(.hour, from: date) < serviceDayStartHour else { return date }
+        return calendar.date(byAdding: .day, value: -1, to: date) ?? date
+    }
+
+    /// Minutes since the start of the operating day. Post-midnight stops get +24h so
+    /// they sort after the late-evening trains instead of jumping to the top.
+    private static func serviceMinutes(hour: Int, minute: Int) -> Int {
+        (hour < serviceDayStartHour ? hour + 24 : hour) * 60 + minute
+    }
+
+    private static func parseTime(_ hhmm: String) -> (hour: Int, minute: Int)? {
+        let parts = hhmm.split(separator: ":")
+        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
+        return (hour, minute)
+    }
+
     /// Finds the soonest future wall-clock occurrence of a scheduled stop time,
     /// respecting weekday/weekend service and trains that cross midnight.
     private func nextOccurrence(timeOfDay: String, after now: Date, serviceType: String) -> Date? {
-        let parts = timeOfDay.split(separator: ":")
-        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return nil }
+        guard let (hour, minute) = Self.parseTime(timeOfDay) else { return nil }
 
         let calendar = Calendar.current
         let wantsWeekend = serviceType.localizedCaseInsensitiveContains("WEEKEND")
-        // Stops before ~3am physically occur the day *after* the trip's operating day.
-        let isAfterMidnight = hour < 3
+        let isAfterMidnight = hour < Self.serviceDayStartHour
         let startOfToday = calendar.startOfDay(for: now)
 
         for dayOffset in 0...2 {
@@ -216,8 +281,7 @@ final class CaltrainService {
     }
 
     static func displayTime(_ hhmm: String) -> String {
-        let parts = hhmm.split(separator: ":")
-        guard parts.count == 2, let hour = Int(parts[0]), let minute = Int(parts[1]) else { return hhmm }
+        guard let (hour, minute) = parseTime(hhmm) else { return hhmm }
         let period = hour < 12 ? "AM" : "PM"
         var h12 = hour % 12
         if h12 == 0 { h12 = 12 }

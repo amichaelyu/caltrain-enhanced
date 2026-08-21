@@ -12,7 +12,7 @@ import CoreLocation
 
 extension Color {
     /// Restrained Caltrain red — the single accent in an otherwise monochrome UI.
-    static let caltrainRed = Color(red: 0.84, green: 0.0, blue: 0.11)
+    static let caltrainRed = Color(red: 0.796, green: 0.125, blue: 0.180) // #CB202E
 }
 
 private enum Metrics {
@@ -84,6 +84,18 @@ private struct TrainTypeDot: View {
     }
 }
 
+/// A travel direction. Owns the labels that the hero board, the "Later departures"
+/// columns and the timetable sheet all need to agree on.
+enum TimetableDirection: Identifiable, CaseIterable {
+    case northbound, southbound
+
+    var id: Self { self }
+    var isNorth: Bool { self == .northbound }
+    var title: String { isNorth ? "Northbound" : "Southbound" }
+    var destination: String { isNorth ? "San Francisco" : "San Jose" }
+    var systemImage: String { isNorth ? "arrow.up" : "arrow.down" }
+}
+
 // MARK: - Root
 
 struct ContentView: View {
@@ -94,6 +106,7 @@ struct ContentView: View {
     @State private var travelTimes: TravelTimes?
     @State private var now = Date()
     @State private var showSettings = false
+    @State private var timetableDirection: TimetableDirection?
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -105,7 +118,9 @@ struct ContentView: View {
                 if location.isDenied {
                     permissionCard
                 } else if let station = location.nearestStation {
-                    DepartureBoard(northbound: northbound.first, southbound: southbound.first)
+                    DepartureBoard(northbound: northbound.first,
+                                   southbound: southbound.first,
+                                   onSelect: { timetableDirection = $0 })
 
                     TravelTimesStrip(times: travelTimes, station: station)
 
@@ -121,6 +136,10 @@ struct ContentView: View {
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(item: $timetableDirection) { direction in
+            TimetableSheet(direction: direction,
+                           stationName: location.nearestStation?.name ?? "")
         }
         .onAppear {
             location.requestLocation()
@@ -182,10 +201,12 @@ struct ContentView: View {
             SectionLabel("Later departures")
 
             HStack(alignment: .top, spacing: 12) {
-                UpcomingColumn(title: "Northbound", systemImage: "arrow.up",
-                               trains: Array(northbound.dropFirst().prefix(4)))
-                UpcomingColumn(title: "Southbound", systemImage: "arrow.down",
-                               trains: Array(southbound.dropFirst().prefix(4)))
+                UpcomingColumn(direction: .northbound,
+                               trains: Array(northbound.dropFirst().prefix(4)),
+                               onSelect: { timetableDirection = $0 })
+                UpcomingColumn(direction: .southbound,
+                               trains: Array(southbound.dropFirst().prefix(4)),
+                               onSelect: { timetableDirection = $0 })
             }
         }
     }
@@ -246,39 +267,46 @@ struct ContentView: View {
 private struct DepartureBoard: View {
     let northbound: NextTrainInfo?
     let southbound: NextTrainInfo?
+    let onSelect: (TimetableDirection) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            DepartureRow(direction: "Northbound", destination: "San Francisco",
-                         systemImage: "arrow.up", train: northbound)
+            row(.northbound, train: northbound)
             Divider().overlay(Color.primary.opacity(0.08))
-            DepartureRow(direction: "Southbound", destination: "San Jose",
-                         systemImage: "arrow.down", train: southbound)
+            row(.southbound, train: southbound)
         }
         .cardBackground()
+    }
+
+    private func row(_ direction: TimetableDirection, train: NextTrainInfo?) -> some View {
+        Button { onSelect(direction) } label: {
+            DepartureRow(direction: direction, train: train)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows the full \(direction.title) timetable")
     }
 }
 
 private struct DepartureRow: View {
-    let direction: String
-    let destination: String
-    let systemImage: String
+    let direction: TimetableDirection
     let train: NextTrainInfo?
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    Image(systemName: systemImage)
+                    Image(systemName: direction.systemImage)
                         .font(.system(size: 12, weight: .bold))
-                    Text(direction)
+                    Text(direction.title)
                         .font(.caption)
                         .textCase(.uppercase)
                         .tracking(1.2)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 9, weight: .bold))
                 }
                 .foregroundStyle(.secondary)
 
-                Text(destination)
+                Text(direction.destination)
                     .font(.system(size: 20, weight: .semibold, design: .rounded))
 
                 if let train {
@@ -412,15 +440,23 @@ private struct TravelTile: View {
 // MARK: - Upcoming list
 
 private struct UpcomingColumn: View {
-    let title: String
-    let systemImage: String
+    let direction: TimetableDirection
     let trains: [NextTrainInfo]
+    let onSelect: (TimetableDirection) -> Void
 
     var body: some View {
+        Button { onSelect(direction) } label: { content }
+            .buttonStyle(.plain)
+            .accessibilityHint("Shows the full \(direction.title) timetable")
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 5) {
-                Image(systemName: systemImage).font(.system(size: 10, weight: .bold))
-                Text(title).font(.caption).textCase(.uppercase).tracking(1)
+                Image(systemName: direction.systemImage).font(.system(size: 10, weight: .bold))
+                Text(direction.title).font(.caption).textCase(.uppercase).tracking(1)
+                Spacer(minLength: 2)
+                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
             }
             .foregroundStyle(.secondary)
 
@@ -447,6 +483,92 @@ private struct UpcomingColumn: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(16)
         .cardBackground()
+    }
+}
+
+// MARK: - Full timetable sheet
+
+/// Every departure for the current service day in one direction, opened by tapping a
+/// direction on the hero board or in the "Later departures" columns.
+private struct TimetableSheet: View {
+    let direction: TimetableDirection
+    let stationName: String
+
+    @Environment(\.dismiss) private var dismiss
+
+    private let entries: [TimetableEntry]
+
+    /// First train that has not left yet — the list opens scrolled to it.
+    private let nextEntry: TimetableEntry?
+
+    init(direction: TimetableDirection, stationName: String) {
+        self.direction = direction
+        self.stationName = stationName
+        // Built eagerly rather than in onAppear: the rows have to exist before
+        // scrollTo can find the one we want to open on.
+        let entries = CaltrainService.shared.fullTimetable(from: stationName,
+                                                           northbound: direction.isNorth)
+        self.entries = entries
+        self.nextEntry = entries.first { !$0.hasDeparted }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+                List {
+                    Section {
+                        ForEach(entries) { entry in
+                            row(entry)
+                                .id(entry.id)
+                                .listRowBackground(entry.id == nextEntry?.id
+                                                   ? Color.caltrainRed.opacity(0.06)
+                                                   : Color.clear)
+                        }
+                    } header: {
+                        Text("\(entries.count) departures · \(CaltrainService.serviceLabel())")
+                    } footer: {
+                        Text("Scheduled times from the timetable effective January 31, 2026. Not live departures.")
+                    }
+                }
+                .listStyle(.insetGrouped)
+                .onAppear {
+                    guard let next = nextEntry else { return }
+                    // Land on the next train rather than the 4am first departure.
+                    // Deferred a runloop turn so the List has laid out its rows.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(next.id, anchor: .top)
+                    }
+                }
+            }
+            .navigationTitle("\(direction.title) · \(stationName)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func row(_ entry: TimetableEntry) -> some View {
+        HStack(spacing: 10) {
+            Text(entry.departureTime)
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .frame(width: 82, alignment: .leading)
+
+            TrainTypeBadge(trainClass: TrainClass(entry.trainType))
+
+            Spacer(minLength: 4)
+
+            Text("#\(entry.trainNumber)")
+                .font(.footnote)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        }
+        .opacity(entry.hasDeparted ? 0.4 : 1)
     }
 }
 

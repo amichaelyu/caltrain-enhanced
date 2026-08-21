@@ -12,7 +12,7 @@ import CoreLocation
 // MARK: - Design tokens
 
 extension Color {
-    static let caltrainRed = Color(red: 0.84, green: 0.0, blue: 0.11)
+    static let caltrainRed = Color(red: 0.796, green: 0.125, blue: 0.180) // #CB202E
 }
 
 // MARK: - Timeline provider
