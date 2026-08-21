@@ -24,6 +24,9 @@ final class SharedLocationManager: NSObject, ObservableObject, CLLocationManager
     @Published private(set) var userLocation: CLLocation?
     @Published private(set) var nearestStation: CaltrainStation?
     @Published private(set) var authorizationStatus: CLAuthorizationStatus
+    /// Station the user picked by hand. Overrides `nearestStation` until cleared, and
+    /// survives relaunches so a deliberate choice isn't undone by the next location fix.
+    @Published private(set) var pickedStation: CaltrainStation?
 
     override init() {
         authorizationStatus = manager.authorizationStatus
@@ -32,6 +35,34 @@ final class SharedLocationManager: NSObject, ObservableObject, CLLocationManager
         manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
         nearestStation = getStoredNearestStation()
         userLocation = getStoredLocation()
+        pickedStation = getStoredPickedStation()
+    }
+
+    // MARK: - Active station
+
+    /// The station the app should show: an explicit pick wins over the nearest one.
+    var activeStation: CaltrainStation? { pickedStation ?? nearestStation }
+
+    var isUsingPickedStation: Bool { pickedStation != nil }
+
+    func selectStation(_ station: CaltrainStation) {
+        pickedStation = station
+        guard let data = try? JSONEncoder().encode(station) else { return }
+        defaults?.set(data, forKey: SharedConstants.selectedStationKey)
+    }
+
+    /// Drops the manual pick and falls back to whatever station is nearest.
+    func useNearestStation() {
+        pickedStation = nil
+        defaults?.removeObject(forKey: SharedConstants.selectedStationKey)
+        requestLocation()
+    }
+
+    private func getStoredPickedStation() -> CaltrainStation? {
+        guard let data = defaults?.data(forKey: SharedConstants.selectedStationKey),
+              let station = try? JSONDecoder().decode(CaltrainStation.self, from: data)
+        else { return nil }
+        return station
     }
 
     // MARK: - App usage

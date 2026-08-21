@@ -16,6 +16,7 @@ enum SharedConstants {
     static let lastKnownStationKey = "lastKnownStation"      // station name string
     static let lastKnownLocationKey = "lastKnownLocation"    // [latitude, longitude]
     static let lastLocationUpdateKey = "lastLocationUpdate"  // Date
+    static let selectedStationKey = "selectedStation"        // encoded CaltrainStation, user-picked override
 
     static var sharedDefaults: UserDefaults? {
         UserDefaults(suiteName: appGroupIdentifier)
