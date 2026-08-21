@@ -169,7 +169,9 @@ struct ContentView: View {
                     }
                     .clipped()
 
-                    TravelTimesStrip(times: travelTimes, station: station)
+                    TravelTimesStrip(times: travelTimes,
+                                     station: station,
+                                     origin: location.userLocation?.coordinate)
                 } else if location.isDenied {
                     permissionCard
                 } else {
@@ -586,17 +588,19 @@ private struct DepartureRow: View {
 private struct TravelTimesStrip: View {
     let times: TravelTimes?
     let station: CaltrainStation
+    let origin: CLLocationCoordinate2D?
 
     @AppStorage(MapsProvider.storageKey) private var mapsProviderRaw = MapsProvider.apple.rawValue
+    @State private var mode: TravelMode = .walking
 
     private var provider: MapsProvider {
         MapsProvider(rawValue: mapsProviderRaw) ?? .apple
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
-                SectionLabel("Getting to the station")
+                SectionLabel("Directions")
                 Spacer()
                 if let times {
                     Text(String(format: "%.1f mi", times.distanceMiles))
@@ -605,15 +609,35 @@ private struct TravelTimesStrip: View {
                 }
             }
 
+            StationRouteMap(station: station,
+                            origin: origin,
+                            mode: mode,
+                            onTap: { navigate(mode) })
+
             HStack(spacing: 12) {
-                TravelTile(systemImage: "figure.walk", label: "Walk",
-                           minutes: times?.walkingMinutes, action: { navigate(.walking) })
-                TravelTile(systemImage: "bicycle", label: "Bike",
-                           minutes: times?.bikingMinutes, action: { navigate(.cycling) })
-                TravelTile(systemImage: "car.fill", label: "Drive",
-                           minutes: times?.drivingMinutes, action: { navigate(.driving) })
+                ForEach(TravelMode.allCases) { candidate in
+                    TravelTile(mode: candidate,
+                               minutes: minutes(for: candidate),
+                               isSelected: candidate == mode,
+                               action: { select(candidate) })
+                }
             }
         }
+    }
+
+    private func minutes(for mode: TravelMode) -> Int? {
+        switch mode {
+        case .walking: times?.walkingMinutes
+        case .cycling: times?.bikingMinutes
+        case .driving: times?.drivingMinutes
+        }
+    }
+
+    /// Picking a mode only redraws the route on the map. Handing off to the maps app is
+    /// the map's own job, so tapping a tile twice never leaves the app.
+    private func select(_ candidate: TravelMode) {
+        guard candidate != mode else { return }
+        withAnimation(.easeInOut(duration: 0.2)) { mode = candidate }
     }
 
     private func navigate(_ mode: TravelMode) {
@@ -621,23 +645,26 @@ private struct TravelTimesStrip: View {
     }
 }
 
+/// Mode selector under the map. Same tile as before the map existed; the mode whose
+/// route is currently drawn is filled rather than card-colored.
 private struct TravelTile: View {
-    let systemImage: String
-    let label: String
+    let mode: TravelMode
     let minutes: Int?
+    let isSelected: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) { tile }
             .buttonStyle(.plain)
-            .accessibilityLabel("\(label) directions to the station")
+            .accessibilityLabel("Show the \(mode.label.lowercased()) route to the station")
+            .accessibilityValue(minutes.map { "\($0) minutes" } ?? "Unknown")
+            .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 
     private var tile: some View {
         VStack(spacing: 8) {
-            Image(systemName: systemImage)
+            Image(systemName: mode.systemImage)
                 .font(.system(size: 18))
-                .foregroundStyle(.primary)
             if let minutes {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     Text("\(minutes)")
@@ -645,22 +672,26 @@ private struct TravelTile: View {
                         .monospacedDigit()
                     Text("min")
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
                 }
             } else {
                 Text("—")
                     .font(.system(size: 22, weight: .light, design: .rounded))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.6) : Color(.tertiaryLabel))
             }
-            Text(label)
+            Text(mode.label)
                 .font(.caption2)
                 .textCase(.uppercase)
                 .tracking(1)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
         }
+        .foregroundStyle(isSelected ? Color.white : Color.primary)
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .cardBackground()
+        .background(
+            RoundedRectangle(cornerRadius: Metrics.cardCorner, style: .continuous)
+                .fill(isSelected ? Color.caltrainRed : Color(.secondarySystemGroupedBackground))
+        )
     }
 }
 
@@ -674,17 +705,24 @@ private struct TimetableSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    private let grid: TimetableGrid
+    @State private var serviceDay: ServiceDay
+    @State private var grid: TimetableGrid
+    /// The grid's horizontal scroll offset, mirrored into the fixed header row so the
+    /// train numbers stay over the columns they label.
+    @State private var scrollX: CGFloat = 0
 
     /// Three train columns plus the station name fill the width exactly, on any device.
     private let visibleTrainColumns: CGFloat = 3
     private let rowHeight: CGFloat = 48
+    private let headerHeight: CGFloat = 64
 
     init(direction: TimetableDirection, stationName: String) {
         self.direction = direction
         self.stationName = stationName
-        self.grid = CaltrainService.shared.timetableGrid(from: stationName,
-                                                         northbound: direction.isNorth)
+        let day = CaltrainService.currentServiceDay()
+        _serviceDay = State(initialValue: day)
+        _grid = State(initialValue: CaltrainService.shared.timetableGrid(
+            from: stationName, northbound: direction.isNorth, serviceDay: day))
     }
 
     var body: some View {
@@ -697,6 +735,7 @@ private struct TimetableSheet: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
+            .safeAreaInset(edge: .top, spacing: 0) { servicePicker }
             .navigationTitle("\(direction.title) · \(stationName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -707,53 +746,97 @@ private struct TimetableSheet: View {
         }
     }
 
-    // Horizontal outside, vertical inside: the train headers pin to the top while the
-    // whole grid — headers included — pans sideways as one piece.
+    private var servicePicker: some View {
+        Picker("Schedule", selection: $serviceDay) {
+            ForEach(ServiceDay.allCases) { day in
+                Text(day.label).tag(day)
+            }
+        }
+        .pickerStyle(.segmented)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    /// Frozen panes: the station column and the header row never move. Only the block of
+    /// times scrolls, and the header mirrors its horizontal offset so labels stay aligned.
     private var table: some View {
         GeometryReader { geo in
             let stationWidth = min(max(geo.size.width * 0.30, 116), 156)
-            let trainWidth = (geo.size.width - stationWidth) / visibleTrainColumns
+            let viewportWidth = geo.size.width - stationWidth
+            let trainWidth = viewportWidth / visibleTrainColumns
 
-            ScrollView(.horizontal) {
+            VStack(spacing: 0) {
+                headerBar(stationWidth: stationWidth,
+                          viewportWidth: viewportWidth,
+                          trainWidth: trainWidth)
+
                 ScrollView(.vertical) {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                        Section {
-                            ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
-                                stationRow(station, index: index,
-                                           stationWidth: stationWidth, trainWidth: trainWidth)
+                    HStack(alignment: .top, spacing: 0) {
+                        stationColumn(width: stationWidth)
+
+                        ScrollViewReader { proxy in
+                            ScrollView(.horizontal) {
+                                trainColumns(trainWidth: trainWidth)
                             }
-                        } header: {
-                            headerRow(stationWidth: stationWidth, trainWidth: trainWidth)
+                            .scrollBounceBehavior(.basedOnSize)
+                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                                geometry.contentOffset.x
+                            } action: { _, newValue in
+                                scrollX = newValue
+                            }
+                            .onAppear { scrollToNextTrain(proxy) }
+                            .onChange(of: serviceDay) {
+                                grid = CaltrainService.shared.timetableGrid(
+                                    from: stationName, northbound: direction.isNorth, serviceDay: serviceDay)
+                                scrollToNextTrain(proxy)
+                            }
                         }
+                        .frame(height: rowHeight * CGFloat(grid.stations.count))
                     }
-                    .padding(.bottom, 24)
                 }
+                .scrollBounceBehavior(.basedOnSize)
             }
         }
     }
 
-    private func headerRow(stationWidth: CGFloat, trainWidth: CGFloat) -> some View {
+    /// Past trains stay in the grid to the left, so open on the next one instead of on
+    /// the first departure of the day. Deferred a runloop turn so the columns exist.
+    private func scrollToNextTrain(_ proxy: ScrollViewProxy) {
+        guard let target = grid.trains.first(where: { !$0.hasDeparted }) ?? grid.trains.first
+        else { return }
+        DispatchQueue.main.async {
+            proxy.scrollTo(target.id, anchor: .leading)
+        }
+    }
+
+    private func headerBar(stationWidth: CGFloat, viewportWidth: CGFloat, trainWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
-            Text(CaltrainService.serviceLabel())
+            Text("Station")
                 .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
+                .foregroundStyle(.tertiary)
                 .padding(.horizontal, 12)
                 .frame(width: stationWidth, alignment: .leading)
 
-            ForEach(grid.trains) { train in
-                VStack(spacing: 5) {
-                    // The wider columns leave room for the full type label.
-                    TrainTypeBadge(trainClass: TrainClass(train.trainType))
-                    Text("#\(train.trainNumber)")
-                        .font(.system(size: 15, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
+            HStack(spacing: 0) {
+                ForEach(grid.trains) { train in
+                    VStack(spacing: 5) {
+                        TrainTypeBadge(trainClass: TrainClass(train.trainType))
+                        Text("#\(train.trainNumber)")
+                            .font(.system(size: 15, weight: .semibold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(width: trainWidth)
+                    .opacity(train.hasDeparted ? departedOpacity : 1)
                 }
-                .frame(width: trainWidth)
             }
+            .offset(x: -scrollX)
+            // Clipped to the grid's viewport so no column slides under the station column.
+            .frame(width: viewportWidth, alignment: .leading)
+            .clipped()
         }
-        .padding(.vertical, 12)
+        .frame(height: headerHeight)
         .background(Color(.secondarySystemGroupedBackground))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -762,31 +845,55 @@ private struct TimetableSheet: View {
         }
     }
 
-    private func stationRow(_ station: String, index: Int,
-                            stationWidth: CGFloat, trainWidth: CGFloat) -> some View {
-        let isCurrent = station.caseInsensitiveCompare(stationName) == .orderedSame
-
-        return HStack(spacing: 0) {
-            Text(station)
-                .font(.system(size: 16, weight: isCurrent ? .bold : .regular))
-                .lineLimit(2)
-                .minimumScaleFactor(0.7)
-                .padding(.horizontal, 12)
-                .frame(width: stationWidth, alignment: .leading)
-
-            ForEach(grid.trains) { train in
-                Text(train.times[station] ?? "—")
-                    .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .frame(width: trainWidth)
+    private func stationColumn(width: CGFloat) -> some View {
+        VStack(spacing: 0) {
+            ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
+                let isCurrent = isCurrentStation(station)
+                Text(station)
+                    .font(.system(size: 16, weight: isCurrent ? .bold : .regular))
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 12)
+                    .frame(width: width, height: rowHeight, alignment: .leading)
+                    .background(rowBackground(isCurrent: isCurrent, index: index))
             }
         }
-        .frame(height: rowHeight)
-        .background(rowBackground(isCurrent: isCurrent, index: index))
+        .overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.12))
+                .frame(width: Metrics.hairline)
+        }
     }
+
+    /// Column-major so each train column carries an id that scrollTo can target.
+    private func trainColumns(trainWidth: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(grid.trains) { train in
+                VStack(spacing: 0) {
+                    ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
+                        let isCurrent = isCurrentStation(station)
+                        Text(train.times[station] ?? "—")
+                            .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .opacity(train.hasDeparted ? departedOpacity : 1)
+                            .frame(width: trainWidth, height: rowHeight)
+                            .background(rowBackground(isCurrent: isCurrent, index: index))
+                    }
+                }
+                .id(train.id)
+            }
+        }
+    }
+
+    private func isCurrentStation(_ station: String) -> Bool {
+        station.caseInsensitiveCompare(stationName) == .orderedSame
+    }
+
+    /// Trains that have already left this station are dimmed rather than dropped.
+    private var departedOpacity: Double { 0.32 }
 
     private func rowBackground(isCurrent: Bool, index: Int) -> Color {
         if isCurrent { return Color.caltrainRed.opacity(0.10) }
@@ -798,9 +905,9 @@ private struct TimetableSheet: View {
             Image(systemName: "moon.zzz")
                 .font(.system(size: 28))
                 .foregroundStyle(.secondary)
-            Text("No more \(direction.title.lowercased()) trains")
+            Text("No \(direction.title.lowercased()) service")
                 .font(.headline)
-            Text("Nothing else scheduled from \(stationName) today.")
+            Text("Nothing runs from \(stationName) on the \(serviceDay.label.lowercased()) schedule.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)

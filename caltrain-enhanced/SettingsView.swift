@@ -3,6 +3,7 @@
 //  caltrain-enhanced
 //
 
+import CoreLocation
 import SwiftUI
 import UIKit
 
@@ -24,7 +25,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Directions")
                 } footer: {
-                    Text("Tapping Walk, Bike or Drive opens directions to the nearest station in this app. If Google Maps isn't installed, directions open in the browser.")
+                    Text("Tapping the route map opens directions to the station in this app. If Google Maps isn't installed, directions open in the browser.")
                 }
 
                 Section("Service tiers") {
@@ -36,18 +37,31 @@ struct SettingsView: View {
                 }
 
                 Section("Location") {
-                    LabeledContent("Nearest station",
-                                   value: location.nearestStation?.name ?? "Locating…")
+                    LabeledContent("Permission", value: Self.permissionLabel(location.authorizationStatus))
 
-                    Button("Open iOS Settings") {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
+                    // Only worth offering a fix when there is something to fix.
+                    switch location.authorizationStatus {
+                    case .notDetermined:
+                        Button("Allow Location Access") { location.requestLocation() }
+                    case .denied, .restricted:
+                        Button("Enable in iOS Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
                         }
+                    default:
+                        EmptyView()
                     }
                 }
 
-                Section("About") {
+                Section {
                     LabeledContent("Version", value: Self.appVersion)
+                } header: {
+                    Text("About")
+                } footer: {
+                    Text("© \(Self.currentYear) Michael Yu")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .padding(.top, 8)
                 }
             }
             .navigationTitle("Settings")
@@ -77,6 +91,20 @@ struct SettingsView: View {
 
     /// Wide enough for the longest badge ("S. COUNTY") so none of them get clamped.
     private static let markerWidth: CGFloat = 78
+
+    private static func permissionLabel(_ status: CLAuthorizationStatus) -> String {
+        switch status {
+        case .authorizedAlways, .authorizedWhenInUse: "Enabled"
+        case .denied, .restricted: "Disabled"
+        case .notDetermined: "Not asked yet"
+        @unknown default: "Unknown"
+        }
+    }
+
+    /// Read at render time so the notice never goes stale.
+    private static var currentYear: String {
+        String(Calendar.current.component(.year, from: Date()))
+    }
 
     private static var appVersion: String {
         let info = Bundle.main.infoDictionary

@@ -26,10 +26,28 @@ enum MapsProvider: String, CaseIterable, Identifiable {
     static let storageKey = "mapsProvider"
 }
 
-enum TravelMode {
+enum TravelMode: String, CaseIterable, Identifiable, Hashable {
     case walking
     case cycling
     case driving
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .walking: "Walk"
+        case .cycling: "Bike"
+        case .driving: "Drive"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .walking: "figure.walk"
+        case .cycling: "bicycle"
+        case .driving: "car.fill"
+        }
+    }
 
     var appleDirectionsMode: String {
         switch self {

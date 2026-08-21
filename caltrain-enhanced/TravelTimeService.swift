@@ -79,6 +79,16 @@ final class TravelTimeService {
         return times
     }
 
+    /// Route geometry for drawing the path to the station on a map. MKDirections has no
+    /// cycling mode, so cycling reuses the walking path.
+    func routeGeometry(from origin: CLLocationCoordinate2D,
+                       to station: CaltrainStation,
+                       mode: TravelMode) async -> MKRoute? {
+        await route(from: origin,
+                    to: station.coordinate,
+                    transport: mode == .driving ? .automobile : .walking)
+    }
+
     private func minutes(_ seconds: TimeInterval) -> Int {
         max(1, Int((seconds / 60).rounded()))
     }

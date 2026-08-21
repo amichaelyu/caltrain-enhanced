@@ -80,6 +80,16 @@ struct NextTrainInfo: Identifiable {
     let direction: String
 }
 
+/// Which timetable is in force. Caltrain runs one schedule Monday–Friday and another
+/// at weekends; the sheet can show either.
+enum ServiceDay: Identifiable, CaseIterable {
+    case weekday, weekend
+
+    var id: Self { self }
+    var label: String { self == .weekday ? "Weekday" : "Weekend" }
+    var isWeekend: Bool { self == .weekend }
+}
+
 /// One column of the timetable grid: a single train and its stop times.
 struct TimetableTrain: Identifiable {
     let id = UUID()
@@ -87,6 +97,9 @@ struct TimetableTrain: Identifiable {
     let trainType: String?
     let departureTime: String              // display time at the reference station
     let times: [String: String]            // station name -> display time
+    /// True only when viewing today's service and this train has already left the
+    /// reference station. Always false for the schedule that is not running today.
+    let hasDeparted: Bool
 }
 
 /// Stations down, trains across — the shape of a printed Caltrain timetable.
@@ -204,22 +217,23 @@ final class CaltrainService {
         return (Array(northbound.prefix(limit)), Array(southbound.prefix(limit)))
     }
 
-    /// Upcoming trains from `stationName` in one direction, each carrying its stop times,
-    /// plus the stations ahead in travel order. Trains that have already left the
-    /// reference station are excluded, as are stations the trains have already passed.
+    /// Every train of `serviceDay` in one direction that stops at `stationName`, each
+    /// carrying its stop times, plus the stations ahead in travel order. Trains that have
+    /// already left are kept and flagged `hasDeparted` so the sheet can grey them out.
     func timetableGrid(from stationName: String,
                        northbound: Bool,
-                       at date: Date = Date(),
-                       maxTrains: Int = 12) -> TimetableGrid {
+                       serviceDay: ServiceDay,
+                       at date: Date = Date()) -> TimetableGrid {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
-        let wantsWeekend = calendar.isDateInWeekend(Self.operatingDay(for: date))
         let nowMinutes = Self.serviceMinutes(hour: hour, minute: minute)
+        // "Already departed" only means anything for the schedule running today.
+        let isToday = serviceDay == Self.currentServiceDay(for: date)
 
         var columns: [(minutes: Int, train: TimetableTrain)] = []
         for schedule in schedules {
-            guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == wantsWeekend,
+            guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == serviceDay.isWeekend,
                   schedule.direction.localizedCaseInsensitiveContains("North") == northbound
             else { continue }
 
@@ -227,20 +241,18 @@ final class CaltrainService {
                 guard let timeStr = train.stops[stationName],
                       let (h, m) = Self.parseTime(timeStr) else { continue }
                 let minutes = Self.serviceMinutes(hour: h, minute: m)
-                guard minutes > nowMinutes else { continue }   // already gone from this station
 
                 columns.append((minutes, TimetableTrain(
                     trainNumber: train.trainNo,
                     trainType: train.type,
                     departureTime: Self.displayTime(timeStr),
-                    times: train.stops.mapValues(Self.displayTime)
+                    times: train.stops.mapValues(Self.displayTime),
+                    hasDeparted: isToday && minutes <= nowMinutes
                 )))
             }
         }
 
-        let trains = columns.sorted { $0.minutes < $1.minutes }
-            .prefix(maxTrains)
-            .map(\.train)
+        let trains = columns.sorted { $0.minutes < $1.minutes }.map(\.train)
 
         // The canonical station list runs north to south, so southbound reads as-is.
         let allNames = CaltrainStations.shared.stations.map(\.name)
@@ -258,10 +270,10 @@ final class CaltrainService {
         return TimetableGrid(stations: served, trains: trains)
     }
 
-    /// Which service is running right now — before ~3am we are still on the previous
+    /// Which schedule is running right now — before ~3am we are still on the previous
     /// operating day, so a 1am Saturday train runs on Friday's weekday schedule.
-    static func serviceLabel(for date: Date = Date()) -> String {
-        Calendar.current.isDateInWeekend(operatingDay(for: date)) ? "Weekend service" : "Weekday service"
+    static func currentServiceDay(for date: Date = Date()) -> ServiceDay {
+        Calendar.current.isDateInWeekend(operatingDay(for: date)) ? .weekend : .weekday
     }
 
     /// Stop times before this hour physically occur the day *after* their operating day.
