@@ -121,6 +121,32 @@ enum TimetableDirection: Identifiable {
     var systemImage: String { isNorth ? "arrow.up" : "arrow.down" }
 }
 
+// MARK: - Transitions
+
+/// Reveals a view top-down, as if it were unrolling out from whatever sits
+/// directly above it. The mask (not the content) is what scales, so rows keep
+/// their real height instead of squashing on the way in.
+private struct UnrollModifier: ViewModifier {
+    var progress: Double
+
+    func body(content: Content) -> some View {
+        content
+            .mask(alignment: .top) {
+                Rectangle().scaleEffect(x: 1, y: progress, anchor: .top)
+            }
+            .opacity(progress)
+            .offset(y: -12 * (1 - progress))
+    }
+}
+
+extension AnyTransition {
+    /// Unrolls downward from the top edge of its own slot.
+    static var unrollDown: AnyTransition {
+        .modifier(active: UnrollModifier(progress: 0),
+                  identity: UnrollModifier(progress: 1))
+    }
+}
+
 // MARK: - Root
 
 struct ContentView: View {
@@ -150,7 +176,7 @@ struct ContentView: View {
                                        activeName: location.activeStation?.name,
                                        nearestName: location.nearestStation?.name,
                                        onSelect: select)
-                        .transition(.opacity.combined(with: .move(edge: .top)))
+                        .transition(.unrollDown)
                 }
 
                 if let station = location.activeStation {
@@ -298,18 +324,6 @@ struct ContentView: View {
                         (note.object as? UITextField)?.selectAll(nil)
                     }
 
-            if !stationQuery.isEmpty {
-                Button {
-                    stationQuery = ""
-                    stationQueryEdited = true
-                    stationFieldFocused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 17))
-                        .foregroundStyle(.tertiary)
-                }
-                .accessibilityLabel("Clear")
-            }
         }
     }
 
@@ -700,11 +714,11 @@ private struct TravelTile: View {
 /// Stations down, trains across — a printed-timetable view of the upcoming trains from
 /// the current station, opened by tapping a direction.
 private struct TimetableSheet: View {
-    let direction: TimetableDirection
     let stationName: String
 
     @Environment(\.dismiss) private var dismiss
 
+    @State private var direction: TimetableDirection
     @State private var serviceDay: ServiceDay
     @State private var grid: TimetableGrid
     /// The grid's horizontal scroll offset, mirrored into the fixed header row so the
@@ -717,12 +731,18 @@ private struct TimetableSheet: View {
     private let headerHeight: CGFloat = 64
 
     init(direction: TimetableDirection, stationName: String) {
-        self.direction = direction
         self.stationName = stationName
         let day = CaltrainService.currentServiceDay()
+        _direction = State(initialValue: direction)
         _serviceDay = State(initialValue: day)
         _grid = State(initialValue: CaltrainService.shared.timetableGrid(
             from: stationName, northbound: direction.isNorth, serviceDay: day))
+    }
+
+    private func reloadGrid() {
+        grid = CaltrainService.shared.timetableGrid(from: stationName,
+                                                    northbound: direction.isNorth,
+                                                    serviceDay: serviceDay)
     }
 
     var body: some View {
@@ -735,8 +755,8 @@ private struct TimetableSheet: View {
                 }
             }
             .background(Color(.systemGroupedBackground))
-            .safeAreaInset(edge: .top, spacing: 0) { servicePicker }
-            .navigationTitle("\(direction.title) · \(stationName)")
+            .safeAreaInset(edge: .top, spacing: 0) { controlBar }
+            .navigationTitle(stationName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -746,13 +766,33 @@ private struct TimetableSheet: View {
         }
     }
 
-    private var servicePicker: some View {
-        Picker("Schedule", selection: $serviceDay) {
-            ForEach(ServiceDay.allCases) { day in
-                Text(day.label).tag(day)
+    private var controlBar: some View {
+        HStack(spacing: 12) {
+            Button {
+                // No crossfade: swap the grid outright.
+                withoutAnimation { direction = direction.flipped }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: direction.systemImage)
+                        .font(.system(size: 12, weight: .bold))
+                    Text(direction.title)
+                        .font(.subheadline.weight(.medium))
+                        .lineLimit(1)
+                }
             }
+            .buttonStyle(.bordered)
+            .accessibilityHint("Switches to \(direction.flipped.title)")
+
+            Spacer(minLength: 8)
+
+            Picker("Schedule", selection: $serviceDay) {
+                ForEach(ServiceDay.allCases) { day in
+                    Text(day.label).tag(day)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 176)
         }
-        .pickerStyle(.segmented)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(.bar)
@@ -787,8 +827,11 @@ private struct TimetableSheet: View {
                             }
                             .onAppear { scrollToNextTrain(proxy) }
                             .onChange(of: serviceDay) {
-                                grid = CaltrainService.shared.timetableGrid(
-                                    from: stationName, northbound: direction.isNorth, serviceDay: serviceDay)
+                                withoutAnimation { reloadGrid() }
+                                scrollToNextTrain(proxy)
+                            }
+                            .onChange(of: direction) {
+                                withoutAnimation { reloadGrid() }
                                 scrollToNextTrain(proxy)
                             }
                         }
@@ -813,8 +856,8 @@ private struct TimetableSheet: View {
     private func headerBar(stationWidth: CGFloat, viewportWidth: CGFloat, trainWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             Text("Station")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 12)
                 .frame(width: stationWidth, alignment: .leading)
 
@@ -918,6 +961,14 @@ private struct TimetableSheet: View {
 }
 
 // MARK: - Shared bits
+
+/// Applies a state change with any ambient animation suppressed, so dependent views
+/// swap in a single frame instead of crossfading.
+private func withoutAnimation(_ change: () -> Void) {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction, change)
+}
 
 struct SectionLabel: View {
     let text: String
