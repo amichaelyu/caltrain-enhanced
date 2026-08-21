@@ -43,6 +43,16 @@ enum TrainClass {
         }
     }
 
+    /// Three-letter form, for the narrow timetable column headers.
+    var shortLabel: String {
+        switch self {
+        case .express: "EXP"
+        case .limited: "LTD"
+        case .southCounty: "SC"
+        case .local: "LOC"
+        }
+    }
+
     var color: Color {
         switch self {
         case .express: Color.caltrainRed
@@ -57,15 +67,16 @@ enum TrainClass {
 /// solid one so it reads the same in light and dark mode.
 private struct TrainTypeBadge: View {
     let trainClass: TrainClass
+    var compact: Bool = false
 
     var body: some View {
-        Text(trainClass.label)
-            .font(.system(size: 10, weight: .bold, design: .rounded))
+        Text(compact ? trainClass.shortLabel : trainClass.label)
+            .font(.system(size: compact ? 9 : 10, weight: .bold, design: .rounded))
             .textCase(.uppercase)
             .tracking(0.6)
             .foregroundStyle(trainClass.color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 3)
+            .padding(.horizontal, compact ? 5 : 7)
+            .padding(.vertical, compact ? 2 : 3)
             .background(Capsule(style: .continuous).fill(trainClass.color.opacity(0.14)))
             .overlay(Capsule(style: .continuous)
                 .strokeBorder(trainClass.color.opacity(0.30), lineWidth: Metrics.hairline))
@@ -488,58 +499,37 @@ private struct UpcomingColumn: View {
 
 // MARK: - Full timetable sheet
 
-/// Every departure for the current service day in one direction, opened by tapping a
-/// direction on the hero board or in the "Later departures" columns.
+/// Stations down, trains across — a printed-timetable view of the upcoming trains from
+/// the current station, opened by tapping a direction.
 private struct TimetableSheet: View {
     let direction: TimetableDirection
     let stationName: String
 
     @Environment(\.dismiss) private var dismiss
 
-    private let entries: [TimetableEntry]
+    private let grid: TimetableGrid
 
-    /// First train that has not left yet — the list opens scrolled to it.
-    private let nextEntry: TimetableEntry?
+    /// Three train columns plus the station name fill the width exactly, on any device.
+    private let visibleTrainColumns: CGFloat = 3
+    private let rowHeight: CGFloat = 48
 
     init(direction: TimetableDirection, stationName: String) {
         self.direction = direction
         self.stationName = stationName
-        // Built eagerly rather than in onAppear: the rows have to exist before
-        // scrollTo can find the one we want to open on.
-        let entries = CaltrainService.shared.fullTimetable(from: stationName,
-                                                           northbound: direction.isNorth)
-        self.entries = entries
-        self.nextEntry = entries.first { !$0.hasDeparted }
+        self.grid = CaltrainService.shared.timetableGrid(from: stationName,
+                                                         northbound: direction.isNorth)
     }
 
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
-                List {
-                    Section {
-                        ForEach(entries) { entry in
-                            row(entry)
-                                .id(entry.id)
-                                .listRowBackground(entry.id == nextEntry?.id
-                                                   ? Color.caltrainRed.opacity(0.06)
-                                                   : Color.clear)
-                        }
-                    } header: {
-                        Text("\(entries.count) departures · \(CaltrainService.serviceLabel())")
-                    } footer: {
-                        Text("Scheduled times from the timetable effective January 31, 2026. Not live departures.")
-                    }
-                }
-                .listStyle(.insetGrouped)
-                .onAppear {
-                    guard let next = nextEntry else { return }
-                    // Land on the next train rather than the 4am first departure.
-                    // Deferred a runloop turn so the List has laid out its rows.
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(next.id, anchor: .top)
-                    }
+            Group {
+                if grid.trains.isEmpty {
+                    emptyState
+                } else {
+                    table
                 }
             }
+            .background(Color(.systemGroupedBackground))
             .navigationTitle("\(direction.title) · \(stationName)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -550,25 +540,106 @@ private struct TimetableSheet: View {
         }
     }
 
-    private func row(_ entry: TimetableEntry) -> some View {
-        HStack(spacing: 10) {
-            Text(entry.departureTime)
-                .font(.system(size: 16, weight: .medium, design: .rounded))
-                .monospacedDigit()
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .frame(width: 82, alignment: .leading)
+    // Horizontal outside, vertical inside: the train headers pin to the top while the
+    // whole grid — headers included — pans sideways as one piece.
+    private var table: some View {
+        GeometryReader { geo in
+            let stationWidth = min(max(geo.size.width * 0.30, 116), 156)
+            let trainWidth = (geo.size.width - stationWidth) / visibleTrainColumns
 
-            TrainTypeBadge(trainClass: TrainClass(entry.trainType))
-
-            Spacer(minLength: 4)
-
-            Text("#\(entry.trainNumber)")
-                .font(.footnote)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
+            ScrollView(.horizontal) {
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        Section {
+                            ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
+                                stationRow(station, index: index,
+                                           stationWidth: stationWidth, trainWidth: trainWidth)
+                            }
+                        } header: {
+                            headerRow(stationWidth: stationWidth, trainWidth: trainWidth)
+                        }
+                    }
+                    .padding(.bottom, 24)
+                }
+            }
         }
-        .opacity(entry.hasDeparted ? 0.4 : 1)
+    }
+
+    private func headerRow(stationWidth: CGFloat, trainWidth: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            Text(CaltrainService.serviceLabel())
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .padding(.horizontal, 12)
+                .frame(width: stationWidth, alignment: .leading)
+
+            ForEach(grid.trains) { train in
+                VStack(spacing: 5) {
+                    // The wider columns leave room for the full type label.
+                    TrainTypeBadge(trainClass: TrainClass(train.trainType))
+                    Text("#\(train.trainNumber)")
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: trainWidth)
+            }
+        }
+        .padding(.vertical, 12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.12))
+                .frame(height: Metrics.hairline)
+        }
+    }
+
+    private func stationRow(_ station: String, index: Int,
+                            stationWidth: CGFloat, trainWidth: CGFloat) -> some View {
+        let isCurrent = station.caseInsensitiveCompare(stationName) == .orderedSame
+
+        return HStack(spacing: 0) {
+            Text(station)
+                .font(.system(size: 16, weight: isCurrent ? .bold : .regular))
+                .lineLimit(2)
+                .minimumScaleFactor(0.7)
+                .padding(.horizontal, 12)
+                .frame(width: stationWidth, alignment: .leading)
+
+            ForEach(grid.trains) { train in
+                Text(train.times[station] ?? "—")
+                    .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .frame(width: trainWidth)
+            }
+        }
+        .frame(height: rowHeight)
+        .background(rowBackground(isCurrent: isCurrent, index: index))
+    }
+
+    private func rowBackground(isCurrent: Bool, index: Int) -> Color {
+        if isCurrent { return Color.caltrainRed.opacity(0.10) }
+        return index.isMultiple(of: 2) ? Color.clear : Color.primary.opacity(0.035)
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "moon.zzz")
+                .font(.system(size: 28))
+                .foregroundStyle(.secondary)
+            Text("No more \(direction.title.lowercased()) trains")
+                .font(.headline)
+            Text("Nothing else scheduled from \(stationName) today.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

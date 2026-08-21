@@ -80,13 +80,21 @@ struct NextTrainInfo: Identifiable {
     let direction: String
 }
 
-/// One row of the full-day timetable sheet.
-struct TimetableEntry: Identifiable {
+/// One column of the timetable grid: a single train and its stop times.
+struct TimetableTrain: Identifiable {
     let id = UUID()
     let trainNumber: String
     let trainType: String?
-    let departureTime: String      // display formatted, e.g. "5:07 AM"
-    let hasDeparted: Bool
+    let departureTime: String              // display time at the reference station
+    let times: [String: String]            // station name -> display time
+}
+
+/// Stations down, trains across — the shape of a printed Caltrain timetable.
+struct TimetableGrid {
+    /// Stations in travel order for this direction, limited to ones these trains serve.
+    let stations: [String]
+    /// Upcoming trains from the reference station, soonest first.
+    let trains: [TimetableTrain]
 }
 
 struct BidirectionalTrainInfo {
@@ -196,17 +204,20 @@ final class CaltrainService {
         return (Array(northbound.prefix(limit)), Array(southbound.prefix(limit)))
     }
 
-    /// Every departure from `stationName` in one direction, for the service day that
-    /// `date` falls in, ordered first train to last. Trains that have already left are
-    /// included and flagged via `hasDeparted` so the timetable shows the whole day.
-    func fullTimetable(from stationName: String, northbound: Bool, on date: Date = Date()) -> [TimetableEntry] {
+    /// Upcoming trains from `stationName` in one direction, each carrying its stop times,
+    /// plus the stations ahead in travel order. Trains that have already left the
+    /// reference station are excluded, as are stations the trains have already passed.
+    func timetableGrid(from stationName: String,
+                       northbound: Bool,
+                       at date: Date = Date(),
+                       maxTrains: Int = 12) -> TimetableGrid {
         let calendar = Calendar.current
         let hour = calendar.component(.hour, from: date)
         let minute = calendar.component(.minute, from: date)
         let wantsWeekend = calendar.isDateInWeekend(Self.operatingDay(for: date))
         let nowMinutes = Self.serviceMinutes(hour: hour, minute: minute)
 
-        var rows: [(minutes: Int, entry: TimetableEntry)] = []
+        var columns: [(minutes: Int, train: TimetableTrain)] = []
         for schedule in schedules {
             guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == wantsWeekend,
                   schedule.direction.localizedCaseInsensitiveContains("North") == northbound
@@ -216,15 +227,35 @@ final class CaltrainService {
                 guard let timeStr = train.stops[stationName],
                       let (h, m) = Self.parseTime(timeStr) else { continue }
                 let minutes = Self.serviceMinutes(hour: h, minute: m)
-                rows.append((minutes, TimetableEntry(
+                guard minutes > nowMinutes else { continue }   // already gone from this station
+
+                columns.append((minutes, TimetableTrain(
                     trainNumber: train.trainNo,
                     trainType: train.type,
                     departureTime: Self.displayTime(timeStr),
-                    hasDeparted: minutes <= nowMinutes
+                    times: train.stops.mapValues(Self.displayTime)
                 )))
             }
         }
-        return rows.sorted { $0.minutes < $1.minutes }.map(\.entry)
+
+        let trains = columns.sorted { $0.minutes < $1.minutes }
+            .prefix(maxTrains)
+            .map(\.train)
+
+        // The canonical station list runs north to south, so southbound reads as-is.
+        let allNames = CaltrainStations.shared.stations.map(\.name)
+        let ordered = northbound ? allNames.reversed().map { $0 } : allNames
+        // Only what is still ahead: stations behind the rider are already-passed times.
+        let ahead: [String]
+        if let start = ordered.firstIndex(where: { $0.caseInsensitiveCompare(stationName) == .orderedSame }) {
+            ahead = Array(ordered[start...])
+        } else {
+            ahead = ordered
+        }
+        // Drop stations none of these trains touch, rather than showing rows of dashes.
+        let served = ahead.filter { name in trains.contains { $0.times[name] != nil } }
+
+        return TimetableGrid(stations: served, trains: trains)
     }
 
     /// Which service is running right now — before ~3am we are still on the previous
