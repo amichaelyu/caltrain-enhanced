@@ -27,6 +27,14 @@ struct SettingsView: View {
                     Text("Tapping Walk, Bike or Drive opens directions to the nearest station in this app. If Google Maps isn't installed, directions open in the browser.")
                 }
 
+                Section("Service tiers") {
+                    ForEach(TrainClass.allCases) { trainClass in
+                        keyRow(description: trainClass.description) {
+                            TrainTypeBadge(trainClass: trainClass).fixedSize()
+                        }
+                    }
+                }
+
                 Section("Location") {
                     LabeledContent("Nearest station",
                                    value: location.nearestStation?.name ?? "Locating…")
@@ -51,6 +59,24 @@ struct SettingsView: View {
             }
         }
     }
+
+    /// One legend line: a fixed-width marker gutter so every description starts at the
+    /// same x, then the description taking the remaining width.
+    private func keyRow<Marker: View>(description: String,
+                                      @ViewBuilder marker: () -> Marker) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            marker()
+                .frame(width: Self.markerWidth, alignment: .leading)
+            Text(description)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 3)
+    }
+
+    /// Wide enough for the longest badge ("S. COUNTY") so none of them get clamped.
+    private static let markerWidth: CGFloat = 78
 
     private static var appVersion: String {
         let info = Bundle.main.infoDictionary

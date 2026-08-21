@@ -285,8 +285,10 @@ final class CaltrainService {
         return (hour, minute)
     }
 
-    /// Finds the soonest future wall-clock occurrence of a scheduled stop time,
-    /// respecting weekday/weekend service and trains that cross midnight.
+    /// Finds the soonest future wall-clock occurrence of a scheduled stop time, limited to
+    /// the operating day we are currently in. Tomorrow morning's trains are deliberately
+    /// not returned — at 1am the honest answer is "no more trains", not a 5am departure
+    /// five hours out.
     private func nextOccurrence(timeOfDay: String, after now: Date, serviceType: String) -> Date? {
         guard let (hour, minute) = Self.parseTime(timeOfDay) else { return nil }
 
@@ -294,12 +296,16 @@ final class CaltrainService {
         let wantsWeekend = serviceType.localizedCaseInsensitiveContains("WEEKEND")
         let isAfterMidnight = hour < Self.serviceDayStartHour
         let startOfToday = calendar.startOfDay(for: now)
+        let currentOperatingDay = Self.operatingDay(for: now)
 
-        for dayOffset in 0...2 {
+        // Only today and tomorrow physically: a post-midnight stop on today's operating
+        // day lands on tomorrow's calendar date.
+        for dayOffset in 0...1 {
             guard let physicalDay = calendar.date(byAdding: .day, value: dayOffset, to: startOfToday) else { continue }
             let operatingDay = isAfterMidnight
                 ? calendar.date(byAdding: .day, value: -1, to: physicalDay) ?? physicalDay
                 : physicalDay
+            guard calendar.isDate(operatingDay, inSameDayAs: currentOperatingDay) else { continue }
             guard calendar.isDateInWeekend(operatingDay) == wantsWeekend else { continue }
 
             var comps = calendar.dateComponents([.year, .month, .day], from: physicalDay)

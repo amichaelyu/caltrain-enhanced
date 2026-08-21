@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CoreLocation
+import UIKit
 
 // MARK: - Design tokens
 
@@ -23,8 +24,10 @@ private enum Metrics {
 /// Service tier, derived from the timetable's free-form `type` string. The embedded
 /// schedule only ever uses "Local Weekday"/"Local Weekend", "Limited", "Express" and
 /// "South County" — anything unrecognized falls back to Local.
-enum TrainClass {
+enum TrainClass: CaseIterable, Identifiable {
     case express, limited, southCounty, local
+
+    var id: Self { self }
 
     init(_ rawType: String?) {
         guard let rawType else { self = .local; return }
@@ -53,6 +56,16 @@ enum TrainClass {
         }
     }
 
+    /// One-line plain-English gloss, used by the Settings color key.
+    var description: String {
+        switch self {
+        case .express: "Skips most stops. Fastest end to end."
+        case .limited: "Skips some of the smaller stops."
+        case .southCounty: "Runs south of San Jose Diridon."
+        case .local: "Stops at every station."
+        }
+    }
+
     var color: Color {
         switch self {
         case .express: Color.caltrainRed
@@ -65,7 +78,7 @@ enum TrainClass {
 
 /// Tinted pill marking a train's service tier. Uses a translucent fill rather than a
 /// solid one so it reads the same in light and dark mode.
-private struct TrainTypeBadge: View {
+struct TrainTypeBadge: View {
     let trainClass: TrainClass
     var compact: Bool = false
 
@@ -97,11 +110,12 @@ private struct TrainTypeDot: View {
 
 /// A travel direction. Owns the labels that the hero board, the "Later departures"
 /// columns and the timetable sheet all need to agree on.
-enum TimetableDirection: Identifiable, CaseIterable {
+enum TimetableDirection: Identifiable {
     case northbound, southbound
 
     var id: Self { self }
     var isNorth: Bool { self == .northbound }
+    var flipped: TimetableDirection { isNorth ? .southbound : .northbound }
     var title: String { isNorth ? "Northbound" : "Southbound" }
     var destination: String { isNorth ? "San Francisco" : "San Jose" }
     var systemImage: String { isNorth ? "arrow.up" : "arrow.down" }
@@ -117,7 +131,12 @@ struct ContentView: View {
     @State private var travelTimes: TravelTimes?
     @State private var now = Date()
     @State private var showSettings = false
+    @State private var isEditingStation = false
+    @State private var stationQuery = ""
+    @State private var stationQueryEdited = false
+    @FocusState private var stationFieldFocused: Bool
     @State private var timetableDirection: TimetableDirection?
+    @State private var direction: TimetableDirection = .northbound
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -126,16 +145,33 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 28) {
                 header
 
-                if location.isDenied {
-                    permissionCard
-                } else if let station = location.nearestStation {
-                    DepartureBoard(northbound: northbound.first,
-                                   southbound: southbound.first,
-                                   onSelect: { timetableDirection = $0 })
+                if isEditingStation {
+                    StationSuggestions(matches: suggestions,
+                                       activeName: location.activeStation?.name,
+                                       nearestName: location.nearestStation?.name,
+                                       onSelect: select)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+
+                if let station = location.activeStation {
+                    ZStack {
+                        DepartureBoard(direction: direction,
+                                       trains: direction.isNorth ? northbound : southbound,
+                                       onToggle: flipDirection,
+                                       onOpenTimetable: { timetableDirection = direction })
+                            .id(direction)
+                            // Northbound arrives from the right, southbound from the left;
+                            // the outgoing card leaves by the opposite edge.
+                            .transition(.asymmetric(
+                                insertion: .move(edge: direction.isNorth ? .trailing : .leading),
+                                removal: .move(edge: direction.isNorth ? .leading : .trailing)
+                            ))
+                    }
+                    .clipped()
 
                     TravelTimesStrip(times: travelTimes, station: station)
-
-                    upcomingSection
+                } else if location.isDenied {
+                    permissionCard
                 } else {
                     loadingCard
                 }
@@ -150,7 +186,7 @@ struct ContentView: View {
         }
         .sheet(item: $timetableDirection) { direction in
             TimetableSheet(direction: direction,
-                           stationName: location.nearestStation?.name ?? "")
+                           stationName: location.activeStation?.name ?? "")
         }
         .onAppear {
             location.requestLocation()
@@ -161,10 +197,10 @@ struct ContentView: View {
             now = date
             refreshTrains()
         }
-        .onChange(of: location.nearestStation?.name) {
+        .onChange(of: location.activeStation?.name) {
             refreshTrains()
         }
-        .task(id: location.nearestStation?.name) {
+        .task(id: location.activeStation?.name) {
             await loadTravelTimes()
         }
     }
@@ -180,44 +216,97 @@ struct ContentView: View {
                     .tracking(2)
                     .foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
-                    Image(systemName: "location.fill")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Color.caltrainRed)
-                    Text(location.nearestStation?.name ?? "Locating…")
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
+                if isEditingStation {
+                    stationField
+                } else {
+                    stationName
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                showSettings = true
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 38, height: 38)
-                    .background(
-                        Circle().fill(Color(.secondarySystemGroupedBackground))
-                    )
+            if isEditingStation {
+                Button("Cancel") { endEditingStation() }
+                    .font(.subheadline)
+                    .tint(Color.caltrainRed)
+                    .padding(.top, 6)
+            } else {
+                Button {
+                    showSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 38, height: 38)
+                        .background(
+                            Circle().fill(Color(.secondarySystemGroupedBackground))
+                        )
+                }
+                .accessibilityLabel("Settings")
             }
-            .accessibilityLabel("Settings")
         }
     }
 
-    private var upcomingSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            SectionLabel("Later departures")
+    /// The station name doubles as the search field: tapping it turns the same text
+    /// editable in place rather than opening a separate screen.
+    private var stationName: some View {
+        Button { beginEditingStation() } label: {
+            HStack(spacing: 8) {
+                // A pin means "you picked this"; the arrow means "this is where you are".
+                Image(systemName: location.isUsingPickedStation ? "mappin.circle.fill" : "location.fill")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color.caltrainRed)
+                Text(location.activeStation?.name ?? "Locating…")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Image(systemName: "pencil")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Station: \(location.activeStation?.name ?? "locating")")
+        .accessibilityHint("Edit to search for another station")
+    }
 
-            HStack(alignment: .top, spacing: 12) {
-                UpcomingColumn(direction: .northbound,
-                               trains: Array(northbound.dropFirst().prefix(4)),
-                               onSelect: { timetableDirection = $0 })
-                UpcomingColumn(direction: .southbound,
-                               trains: Array(southbound.dropFirst().prefix(4)),
-                               onSelect: { timetableDirection = $0 })
+    private var stationField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Color.caltrainRed)
+
+            TextField("Station", text: $stationQuery)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+                .textInputAutocapitalization(.words)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused($stationFieldFocused)
+                // Return takes the top suggestion, so "moun" + return is enough.
+                .onSubmit { if let best = suggestions.first { select(best.station) } }
+                .onChange(of: stationQuery) { _, newValue in
+                    if newValue != (location.activeStation?.name ?? "") { stationQueryEdited = true }
+                }
+                // The name arrives pre-filled and selected, so the first keystroke
+                // replaces it instead of appending to it.
+                .onReceive(NotificationCenter.default
+                    .publisher(for: UITextField.textDidBeginEditingNotification)) { note in
+                        (note.object as? UITextField)?.selectAll(nil)
+                    }
+
+            if !stationQuery.isEmpty {
+                Button {
+                    stationQuery = ""
+                    stationQueryEdited = true
+                    stationFieldFocused = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 17))
+                        .foregroundStyle(.tertiary)
+                }
+                .accessibilityLabel("Clear")
             }
         }
     }
@@ -250,6 +339,10 @@ struct ContentView: View {
             }
             .buttonStyle(.borderedProminent)
             .tint(Color.caltrainRed)
+
+            Button("Choose a station instead") { beginEditingStation() }
+                .font(.subheadline)
+                .tint(Color.caltrainRed)
         }
         .frame(maxWidth: .infinity)
         .padding(24)
@@ -258,15 +351,52 @@ struct ContentView: View {
 
     // MARK: Data
 
+    private func flipDirection() {
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+            direction = direction.flipped
+        }
+    }
+
+    /// Suggestions for the current query. Until the first keystroke the field still
+    /// holds the current station, so show the whole line rather than a list of one.
+    private var suggestions: [StationMatch] {
+        stationQueryEdited
+            ? StationSearch.matches(for: stationQuery, from: location.userLocation)
+            : StationSearch.allStations(from: location.userLocation)
+    }
+
+    private func beginEditingStation() {
+        stationQuery = location.activeStation?.name ?? ""
+        stationQueryEdited = false
+        withAnimation(.easeInOut(duration: 0.2)) { isEditingStation = true }
+        stationFieldFocused = true
+    }
+
+    private func endEditingStation() {
+        stationFieldFocused = false
+        withAnimation(.easeInOut(duration: 0.2)) { isEditingStation = false }
+    }
+
+    private func select(_ station: CaltrainStation) {
+        // The arrow-marked row is the station you're actually at, so choosing it means
+        // "follow my location again" rather than pinning that one station.
+        if station.name == location.nearestStation?.name {
+            location.useNearestStation()
+        } else {
+            location.selectStation(station)
+        }
+        endEditingStation()
+    }
+
     private func refreshTrains() {
-        guard let station = location.nearestStation else { return }
+        guard let station = location.activeStation else { return }
         let upcoming = CaltrainService.shared.upcomingTrains(from: station.name, currentTime: Date())
         northbound = upcoming.northbound
         southbound = upcoming.southbound
     }
 
     private func loadTravelTimes() async {
-        guard let station = location.nearestStation,
+        guard let station = location.activeStation,
               let origin = location.userLocation?.coordinate else { return }
         let result = await TravelTimeService.shared.travelTimes(from: origin, to: station)
         await MainActor.run { self.travelTimes = result }
@@ -276,25 +406,121 @@ struct ContentView: View {
 // MARK: - Departure board (hero)
 
 private struct DepartureBoard: View {
-    let northbound: NextTrainInfo?
-    let southbound: NextTrainInfo?
-    let onSelect: (TimetableDirection) -> Void
+    let direction: TimetableDirection
+    let trains: [NextTrainInfo]
+    let onToggle: () -> Void
+    let onOpenTimetable: () -> Void
+
+    private var next: NextTrainInfo? { trains.first }
+    /// The two departures after the one in the hero row.
+    private var following: [NextTrainInfo] { Array(trains.dropFirst().prefix(2)) }
 
     var body: some View {
         VStack(spacing: 0) {
-            row(.northbound, train: northbound)
-            Divider().overlay(Color.primary.opacity(0.08))
-            row(.southbound, train: southbound)
+            directionToggle
+
+            DepartureRow(direction: direction, train: next)
+
+            if !following.isEmpty {
+                hairline
+                followingRows
+            }
+
+            hairline
+            timetableLink
         }
         .cardBackground()
+        .clipShape(RoundedRectangle(cornerRadius: Metrics.cardCorner, style: .continuous))
     }
 
-    private func row(_ direction: TimetableDirection, train: NextTrainInfo?) -> some View {
-        Button { onSelect(direction) } label: {
-            DepartureRow(direction: direction, train: train)
+    private var hairline: some View {
+        Rectangle()
+            .fill(Color.primary.opacity(0.08))
+            .frame(height: Metrics.hairline)
+    }
+
+    /// Tapping anywhere on this bar flips the direction, sliding this card out and the
+    /// other one in from the opposite edge.
+    private var directionToggle: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 8) {
+                Image(systemName: direction.systemImage)
+                    .font(.system(size: 13, weight: .bold))
+
+                Text(direction.title)
+                    .font(.caption)
+                    .textCase(.uppercase)
+                    .tracking(1.2)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "arrow.up.arrow.down")
+                    .font(.system(size: 12, weight: .semibold))
+                    .padding(7)
+                    .background(Circle().fill(Color.primary.opacity(0.06)))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Shows the full \(direction.title) timetable")
+        .accessibilityLabel("\(direction.title). Tap to show \(direction.flipped.title)")
+    }
+
+    private var followingRows: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Then")
+                .font(.caption2)
+                .textCase(.uppercase)
+                .tracking(1)
+                .foregroundStyle(.tertiary)
+
+            ForEach(following) { train in
+                HStack(spacing: 8) {
+                    TrainTypeDot(trainClass: TrainClass(train.trainType))
+
+                    Text(train.arrivalTime)
+                        .font(.system(size: 16, weight: .medium, design: .rounded))
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+
+                    Text("#\(train.trainNumber)")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+
+                    Spacer(minLength: 6)
+
+                    Text("\(train.minutesUntilArrival) min")
+                        .font(.footnote)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 14)
+    }
+
+    private var timetableLink: some View {
+        Button(action: onOpenTimetable) {
+            HStack(spacing: 6) {
+                Text("Full timetable")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Shows every \(direction.title.lowercased()) departure ahead")
     }
 }
 
@@ -305,20 +531,8 @@ private struct DepartureRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Image(systemName: direction.systemImage)
-                        .font(.system(size: 12, weight: .bold))
-                    Text(direction.title)
-                        .font(.caption)
-                        .textCase(.uppercase)
-                        .tracking(1.2)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .bold))
-                }
-                .foregroundStyle(.secondary)
-
                 Text(direction.destination)
-                    .font(.system(size: 20, weight: .semibold, design: .rounded))
+                    .font(.system(size: 22, weight: .semibold, design: .rounded))
 
                 if let train {
                     HStack(spacing: 7) {
@@ -338,7 +552,9 @@ private struct DepartureRow: View {
 
             countdown
         }
-        .padding(20)
+        .padding(.horizontal, 20)
+        .padding(.top, 4)
+        .padding(.bottom, 18)
     }
 
     @ViewBuilder private var countdown: some View {
@@ -444,55 +660,6 @@ private struct TravelTile: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 16)
-        .cardBackground()
-    }
-}
-
-// MARK: - Upcoming list
-
-private struct UpcomingColumn: View {
-    let direction: TimetableDirection
-    let trains: [NextTrainInfo]
-    let onSelect: (TimetableDirection) -> Void
-
-    var body: some View {
-        Button { onSelect(direction) } label: { content }
-            .buttonStyle(.plain)
-            .accessibilityHint("Shows the full \(direction.title) timetable")
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 5) {
-                Image(systemName: direction.systemImage).font(.system(size: 10, weight: .bold))
-                Text(direction.title).font(.caption).textCase(.uppercase).tracking(1)
-                Spacer(minLength: 2)
-                Image(systemName: "chevron.right").font(.system(size: 8, weight: .bold))
-            }
-            .foregroundStyle(.secondary)
-
-            if trains.isEmpty {
-                Text("—").foregroundStyle(.tertiary).font(.subheadline)
-            } else {
-                ForEach(trains) { train in
-                    HStack(spacing: 6) {
-                        TrainTypeDot(trainClass: TrainClass(train.trainType))
-                        Text(train.arrivalTime)
-                            .font(.system(size: 15, weight: .medium, design: .rounded))
-                            .monospacedDigit()
-                            .lineLimit(1)
-                            .fixedSize(horizontal: true, vertical: false)
-                        Spacer(minLength: 4)
-                        Text("\(train.minutesUntilArrival)m")
-                            .font(.footnote)
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(16)
         .cardBackground()
     }
 }
@@ -645,7 +812,7 @@ private struct TimetableSheet: View {
 
 // MARK: - Shared bits
 
-private struct SectionLabel: View {
+struct SectionLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -657,7 +824,7 @@ private struct SectionLabel: View {
     }
 }
 
-private extension View {
+extension View {
     func cardBackground() -> some View {
         self.background(
             RoundedRectangle(cornerRadius: Metrics.cardCorner, style: .continuous)
