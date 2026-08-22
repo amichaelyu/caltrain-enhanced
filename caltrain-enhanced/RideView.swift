@@ -49,6 +49,14 @@ struct RideView: View {
                                             onPick: { showDestinationPicker = true })
 
                         VStack(alignment: .leading, spacing: 10) {
+                            SectionLabel("On the line")
+                            RideMap(estimate: estimate,
+                                    destinationName: ride.destinationName,
+                                    now: now,
+                                    onSelect: setDestination)
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .firstTextBaseline) {
                                 SectionLabel("The run")
                                 Spacer()
@@ -171,7 +179,7 @@ private struct RideTrainTile: View {
                 Text("#\(itinerary.trainNumber)")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .monospacedDigit()
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color(.secondaryLabel))
                 Text(trainClass.shortLabel)
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .tracking(0.5)
@@ -333,7 +341,7 @@ private struct RideTimeline: View {
 
     private let rowHeight: CGFloat = 52
     private let connectorHeight: CGFloat = 28
-    private let timeWidth: CGFloat = 58
+    private let timeWidth: CGFloat = 62
     private let timeGap: CGFloat = 10
     private let railWidth: CGFloat = 30
 
@@ -395,19 +403,20 @@ private struct RideTimeline: View {
             .overlay(Circle().strokeBorder(Color(.secondarySystemGroupedBackground), lineWidth: 2.5))
     }
 
-    /// Vertical position of the train, interpolated within the leg it is on. Nil until the
-    /// ride is actually under way — before departure there's nothing to mark but the
-    /// station you're standing in.
+    /// Vertical position of the train, interpolated within the leg it is on — same
+    /// `RidePlacement` the map draws from, so the two never disagree. Nil until the ride
+    /// is actually under way: before departure there's nothing to mark but the station
+    /// you're standing in.
     private var positionY: CGFloat? {
         guard stops.first?.hasPassed == true else { return nil }
-        guard let position = estimate.position, position.segmentIndex + 1 < stops.count else {
-            // No fix to go on: fall back to the last stop the schedule says is behind us.
+        guard let placement = estimate.placement(at: now), placement.segmentIndex + 1 < stops.count else {
+            // Nothing to interpolate within: fall back to the last stop behind us.
             guard let lastPassed = stops.lastIndex(where: { $0.hasPassed }) else { return nil }
             return center(lastPassed)
         }
-        let from = center(position.segmentIndex)
-        let to = center(position.segmentIndex + 1)
-        return from + (to - from) * position.fraction
+        let from = center(placement.segmentIndex)
+        let to = center(placement.segmentIndex + 1)
+        return from + (to - from) * placement.fraction
     }
 
     private func center(_ index: Int) -> CGFloat {
@@ -436,10 +445,7 @@ private struct RideTimeline: View {
         let isBoarding = index == 0
         return Button { onSelect(stop.station.name) } label: {
             HStack(spacing: 0) {
-                Text(RideFormat.clock(stop.projected))
-                    .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(stop.hasPassed ? .tertiary : .primary)
+                clock(stop)
                     .frame(width: timeWidth, alignment: .trailing)
                     .padding(.trailing, timeGap)
 
@@ -478,6 +484,25 @@ private struct RideTimeline: View {
         .buttonStyle(.plain)
         .accessibilityLabel("\(stop.station.name), \(RideFormat.clock(stop.projected))")
         .accessibilityHint(isDestination ? "Your stop. Tap to clear" : "Tap to get off here")
+    }
+
+    /// Digits at full size with the AM/PM tucked in small beside them: at 14pt an
+    /// "11:05 PM" wouldn't fit the column, and truncating a time is worse than shrinking
+    /// the half of it you can infer.
+    private func clock(_ stop: RideStopEstimate) -> some View {
+        let parts = RideFormat.clockParts(stop.projected)
+        return HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(parts.time)
+                .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
+                .monospacedDigit()
+            if let meridiem = parts.meridiem {
+                Text(meridiem)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(stop.hasPassed ? .tertiary : .primary)
     }
 
     @ViewBuilder

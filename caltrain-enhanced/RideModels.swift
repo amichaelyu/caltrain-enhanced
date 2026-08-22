@@ -100,10 +100,10 @@ struct RideEstimate {
 
 enum RideEstimator {
 
-    /// How far off the line a fix can be and still be read as "on this train". Generous
-    /// enough for a wide corridor and a coarse fix, tight enough that sitting at home in
-    /// the next town over doesn't get mistaken for riding.
-    private static let corridorMeters: CLLocationDistance = 1500
+    /// How far off the line a fix can be and still be read as "on this train". Measured
+    /// against the real track geometry, so a fix on a train lands within a hundred metres
+    /// or so; the slack here is for a coarse fix, not for the shape of the corridor.
+    private static let corridorMeters: CLLocationDistance = 1000
 
     /// Cap on the inferred delay. Beyond this the position match is more likely wrong
     /// than the train is late.
@@ -167,17 +167,22 @@ enum RideEstimator {
         return min(max(0, now.timeIntervalSince(implied)), maxDelaySeconds)
     }
 
-    /// Finds the leg of the run the rider is on, by taking the closest segment between
-    /// consecutive stops. Returns nil when no leg is close enough to believe.
+    /// Finds the leg of the run the rider is on, by taking the closest leg of track.
+    /// Returns nil when no leg is close enough to believe.
     private static func locate(_ location: CLLocation, on itinerary: RideItinerary) -> RidePosition? {
         let stops = itinerary.stops
         guard stops.count >= 2 else { return nil }
 
         var best: RidePosition?
         for index in 0..<(stops.count - 1) {
-            let projection = project(location.coordinate,
-                                     onto: stops[index].station.coordinate,
-                                     stops[index + 1].station.coordinate)
+            let from = stops[index].station
+            let to = stops[index + 1].station
+            // The real corridor where we have it: matching against the track rather than
+            // the chord between platforms is the difference between a believable fix and
+            // a kilometre of error wherever the line bends.
+            let track = CaltrainCorridor.track(from: from.name, to: to.name)
+                ?? [from.coordinate, to.coordinate]
+            let projection = project(location.coordinate, onto: track)
             if best == nil || projection.meters < best!.metersFromLine {
                 best = RidePosition(segmentIndex: index,
                                     fraction: projection.fraction,
@@ -187,6 +192,35 @@ enum RideEstimator {
 
         guard let best, best.metersFromLine <= corridorMeters else { return nil }
         return best
+    }
+
+    /// Closest point on a polyline: how far along it the rider is, as a fraction of the
+    /// leg's length, and how far off it they are.
+    private static func project(_ point: CLLocationCoordinate2D,
+                                onto polyline: [CLLocationCoordinate2D]) -> (fraction: Double, meters: Double) {
+        guard polyline.count >= 2 else { return (0, .greatestFiniteMagnitude) }
+
+        var closest = (along: 0.0, meters: Double.greatestFiniteMagnitude)
+        var walked: Double = 0
+        for (a, b) in zip(polyline, polyline.dropFirst()) {
+            let length = meters(a, b)
+            let hit = project(point, onto: a, b)
+            if hit.meters < closest.meters {
+                closest = (walked + length * hit.fraction, hit.meters)
+            }
+            walked += length
+        }
+
+        guard walked > 0 else { return (0, closest.meters) }
+        return (min(max(closest.along / walked, 0), 1), closest.meters)
+    }
+
+    private static func meters(_ a: CLLocationCoordinate2D, _ b: CLLocationCoordinate2D) -> Double {
+        let metersPerDegreeLat = 111_320.0
+        let metersPerDegreeLon = 111_320.0 * cos(a.latitude * .pi / 180)
+        let dx = (b.longitude - a.longitude) * metersPerDegreeLon
+        let dy = (b.latitude - a.latitude) * metersPerDegreeLat
+        return (dx * dx + dy * dy).squareRoot()
     }
 
     /// Perpendicular projection of `point` onto the segment `a`–`b`, in a local flat-earth
@@ -212,6 +246,52 @@ enum RideEstimator {
     }
 }
 
+// MARK: - Drawing position
+
+/// Where the train sits along the run: the stop just behind it, plus how far it has got
+/// towards the next one. Two ways to arrive at one, in order of preference — the rider's
+/// own fix matched to the corridor, or, when the phone has nothing near the line, plain
+/// interpolation of the projected times.
+struct RidePlacement {
+    let segmentIndex: Int
+    /// 0 at `segmentIndex`, 1 at the stop after it.
+    let fraction: Double
+    /// True when this came from a location fix rather than the clock.
+    let isLive: Bool
+}
+
+extension RideEstimate {
+
+    /// Nil until the train is due out of the boarding station: before that there is
+    /// nothing moving to draw, just a rider on a platform.
+    func placement(at now: Date) -> RidePlacement? {
+        guard stops.count >= 2, let origin = stops.first, now >= origin.scheduled else { return nil }
+
+        // A fix close enough to the line to be believed wins: it knows about delays the
+        // timetable can't.
+        if let position, position.segmentIndex + 1 < stops.count {
+            return RidePlacement(segmentIndex: position.segmentIndex,
+                                 fraction: position.fraction,
+                                 isLive: true)
+        }
+
+        // Otherwise walk the projected times and find the leg `now` falls inside.
+        for index in 0..<(stops.count - 1) {
+            let departure = stops[index].projected
+            let arrival = stops[index + 1].projected
+            guard now < arrival else { continue }
+            let span = arrival.timeIntervalSince(departure)
+            let fraction = span > 0 ? now.timeIntervalSince(departure) / span : 0
+            return RidePlacement(segmentIndex: index,
+                                 fraction: min(max(fraction, 0), 1),
+                                 isLive: false)
+        }
+
+        // Past the last stop on the run.
+        return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, isLive: false)
+    }
+}
+
 // MARK: - Formatting
 
 enum RideFormat {
@@ -219,6 +299,24 @@ enum RideFormat {
     static func clock(_ date: Date) -> String {
         date.formatted(.dateTime.hour().minute())
     }
+
+    /// The same time split in two, so a column of them can line its digits up and set
+    /// the AM/PM small. `meridiem` is nil on a 24-hour clock, where there isn't one.
+    static func clockParts(_ date: Date) -> (time: String, meridiem: String?) {
+        let meridiem = meridiemFormatter.string(from: date)
+        guard !meridiem.isEmpty else {
+            return (date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute()), nil)
+        }
+        return (date.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), meridiem)
+    }
+
+    /// Yields "" wherever the locale's clock has no AM/PM to show.
+    private static let meridiemFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = .autoupdatingCurrent
+        formatter.setLocalizedDateFormatFromTemplate("a")
+        return formatter
+    }()
 }
 
 // MARK: - Session
