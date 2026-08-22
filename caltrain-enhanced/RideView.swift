@@ -171,6 +171,7 @@ private struct RideTrainTile: View {
                 Text("#\(itinerary.trainNumber)")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .monospacedDigit()
+                    .foregroundStyle(.secondary)
                 Text(trainClass.shortLabel)
                     .font(.system(size: 9, weight: .bold, design: .rounded))
                     .tracking(0.5)
