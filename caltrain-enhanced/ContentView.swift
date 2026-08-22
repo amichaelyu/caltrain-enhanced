@@ -715,7 +715,7 @@ private struct TravelTimesStrip: View {
                             mode: mode,
                             onTap: { navigate(mode) })
 
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 ForEach(TravelMode.allCases) { candidate in
                     TravelTile(mode: candidate,
                                minutes: minutes(for: candidate),
@@ -762,35 +762,30 @@ private struct TravelTile: View {
             .accessibilityAddTraits(isSelected ? [.isSelected, .isButton] : .isButton)
     }
 
+    /// One line, not three: the glyph already says which mode this is, so the written
+    /// label was costing height the map could use.
     private var tile: some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 5) {
             Image(systemName: mode.systemImage)
-                .font(.system(size: 18))
+                .font(.system(size: 13))
             if let minutes {
-                HStack(alignment: .firstTextBaseline, spacing: 2) {
-                    Text("\(minutes)")
-                        .font(.system(size: 22, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                    Text("min")
-                        .font(.caption)
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
-                }
+                Text("\(minutes)")
+                    .font(.system(size: 15, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                Text("min")
+                    .font(.caption2)
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
             } else {
                 Text("—")
-                    .font(.system(size: 22, weight: .light, design: .rounded))
+                    .font(.system(size: 15, weight: .light, design: .rounded))
                     .foregroundStyle(isSelected ? Color.white.opacity(0.6) : Color(.tertiaryLabel))
             }
-            Text(mode.label)
-                .font(.caption2)
-                .textCase(.uppercase)
-                .tracking(1)
-                .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.secondary)
         }
         .foregroundStyle(isSelected ? Color.white : Color.primary)
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
+        .padding(.vertical, 9)
         .background(
-            RoundedRectangle(cornerRadius: Metrics.cardCorner, style: .continuous)
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .fill(isSelected ? Color.caltrainRed : Color(.secondarySystemGroupedBackground))
         )
     }
