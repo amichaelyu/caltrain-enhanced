@@ -11,7 +11,7 @@ import SwiftUI
 struct caltrain_enhancedApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            RootTabView()
         }
     }
 }

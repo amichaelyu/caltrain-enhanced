@@ -150,6 +150,12 @@ extension AnyTransition {
 // MARK: - Root
 
 struct ContentView: View {
+    /// Owned by the tab container so the Ride tab opens on the direction you were reading.
+    @Binding var direction: TimetableDirection
+    /// Called with a train and the stop the rider is getting off at, which together are
+    /// everything the Ride tab needs.
+    var onStartRide: (String, String) -> Void = { _, _ in }
+
     @ObservedObject private var location = SharedLocationManager.shared
     @Environment(\.scenePhase) private var scenePhase
 
@@ -163,7 +169,7 @@ struct ContentView: View {
     @State private var stationQueryEdited = false
     @FocusState private var stationFieldFocused: Bool
     @State private var showTimetable = false
-    @State private var direction: TimetableDirection = .northbound
+    @State private var destinationRequest: DestinationRequest?
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -185,7 +191,8 @@ struct ContentView: View {
                         DepartureBoard(direction: direction,
                                        trains: direction.isNorth ? northbound : southbound,
                                        onToggle: flipDirection,
-                                       onOpenTimetable: { showTimetable = true })
+                                       onOpenTimetable: { showTimetable = true },
+                                       onChooseDestination: chooseDestination)
                             .id(direction)
                             // Northbound arrives from the right, southbound from the left;
                             // the outgoing card leaves by the opposite edge.
@@ -215,9 +222,17 @@ struct ContentView: View {
         }
         // The sheet edits `direction` through a binding, so flipping the timetable also
         // flips the board behind it.
+        .sheet(item: $destinationRequest) { request in
+            if let itinerary = request.itinerary {
+                RideDestinationPickerSheet(itinerary: itinerary, selected: nil) { stopName in
+                    onStartRide(request.trainNumber, stopName)
+                }
+            }
+        }
         .sheet(isPresented: $showTimetable) {
             TimetableSheet(direction: $direction,
-                           stationName: location.activeStation?.name ?? "")
+                           stationName: location.activeStation?.name ?? "",
+                           onStartRide: onStartRide)
         }
         // Location follows the scene, not the view: tracking only runs while the app is
         // actually on screen, and the clock stops ticking behind a backgrounded app.
@@ -416,6 +431,13 @@ struct ContentView: View {
         endEditingStation()
     }
 
+    private func chooseDestination(_ trainNumber: String) {
+        guard let station = location.activeStation else { return }
+        destinationRequest = DestinationRequest(trainNumber: trainNumber,
+                                                originName: station.name,
+                                                northbound: direction.isNorth)
+    }
+
     private func refreshTrains() {
         guard let station = location.activeStation else { return }
         let upcoming = CaltrainService.shared.upcomingTrains(from: station.name, currentTime: Date())
@@ -450,6 +472,7 @@ private struct DepartureBoard: View {
     let trains: [NextTrainInfo]
     let onToggle: () -> Void
     let onOpenTimetable: () -> Void
+    let onChooseDestination: (String) -> Void
 
     private var next: NextTrainInfo? { trains.first }
     /// The two departures after the one in the hero row.
@@ -459,11 +482,20 @@ private struct DepartureBoard: View {
         VStack(spacing: 0) {
             directionToggle
 
-            DepartureRow(direction: direction, train: next)
+            Button { if let next { onChooseDestination(next.trainNumber) } } label: {
+                DepartureRow(direction: direction, train: next)
+            }
+            .buttonStyle(.plain)
+            .disabled(next == nil)
 
             if !following.isEmpty {
                 hairline
                 followingRows
+            }
+
+            if let next {
+                hairline
+                rideLink(next)
             }
 
             hairline
@@ -518,6 +550,7 @@ private struct DepartureBoard: View {
                 .foregroundStyle(.tertiary)
 
             ForEach(following) { train in
+                Button { onChooseDestination(train.trainNumber) } label: {
                 HStack(spacing: 8) {
                     TrainTypeDot(trainClass: TrainClass(train.trainType))
 
@@ -539,10 +572,40 @@ private struct DepartureBoard: View {
                         .monospacedDigit()
                         .foregroundStyle(.secondary)
                 }
+                .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Track this train on the Ride tab")
             }
         }
         .padding(.horizontal, 20)
         .padding(.vertical, 14)
+    }
+
+    /// A board can say when a train leaves but not where you're going, so that's the one
+    /// thing it asks — and the answer is enough to start following the ride.
+    private func rideLink(_ train: NextTrainInfo) -> some View {
+        Button { onChooseDestination(train.trainNumber) } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "flag.checkered")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.caltrainRed)
+                Text("Going to…")
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 6)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Choose the station you're getting off at")
+        .accessibilityHint("Opens the stops on train \(train.trainNumber), then follows the ride")
     }
 
     private var timetableLink: some View {
@@ -739,6 +802,7 @@ private struct TravelTile: View {
 /// the current station, opened by tapping a direction.
 private struct TimetableSheet: View {
     let stationName: String
+    let onStartRide: (String, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -754,8 +818,11 @@ private struct TimetableSheet: View {
     private let rowHeight: CGFloat = 48
     private let headerHeight: CGFloat = 64
 
-    init(direction: Binding<TimetableDirection>, stationName: String) {
+    init(direction: Binding<TimetableDirection>,
+         stationName: String,
+         onStartRide: @escaping (String, String) -> Void) {
         self.stationName = stationName
+        self.onStartRide = onStartRide
         let day = CaltrainService.currentServiceDay()
         _direction = direction
         _serviceDay = State(initialValue: day)
@@ -939,15 +1006,27 @@ private struct TimetableSheet: View {
                 VStack(spacing: 0) {
                     ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
                         let isCurrent = isCurrentStation(station)
-                        Text(train.times[station] ?? "—")
-                            .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .opacity(train.hasDeparted ? departedOpacity : 1)
-                            .frame(width: trainWidth, height: rowHeight)
-                            .background(rowBackground(isCurrent: isCurrent, index: index))
+                        // A cell names a train and a station, which is exactly a ride:
+                        // this train, off at that stop.
+                        Button {
+                            onStartRide(train.trainNumber, station)
+                            dismiss()
+                        } label: {
+                            Text(train.times[station] ?? "—")
+                                .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
+                                .monospacedDigit()
+                                .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                                .opacity(train.hasDeparted ? departedOpacity : 1)
+                                .frame(width: trainWidth, height: rowHeight)
+                                .background(rowBackground(isCurrent: isCurrent, index: index))
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(train.times[station] == nil)
+                        .accessibilityLabel("\(station), \(train.times[station] ?? "no service"), train \(train.trainNumber)")
+                        .accessibilityHint("Ride this train and get off here")
                     }
                 }
                 .id(train.id)
@@ -1015,6 +1094,21 @@ extension View {
     }
 }
 
+/// A pending "where are you getting off?" question about one train from one station.
+private struct DestinationRequest: Identifiable {
+    let trainNumber: String
+    let originName: String
+    let northbound: Bool
+
+    var id: String { "\(trainNumber)@\(originName)" }
+
+    var itinerary: RideItinerary? {
+        CaltrainService.shared.itinerary(trainNumber: trainNumber,
+                                         northbound: northbound,
+                                         boardingAt: originName)
+    }
+}
+
 #Preview {
-    ContentView()
+    ContentView(direction: .constant(.northbound))
 }

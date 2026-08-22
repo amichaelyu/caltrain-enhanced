@@ -337,3 +337,98 @@ final class CaltrainService {
         return String(format: "%d:%02d %@", h12, minute, period)
     }
 }
+
+// MARK: - Ride support
+
+extension CaltrainService {
+
+    /// Absolute wall-clock date for a `HH:mm` stop time on the operating day containing
+    /// `date`. Post-midnight stops land on the next calendar day, which is what makes a
+    /// 23:50 departure and a 00:20 arrival sort — and subtract — correctly.
+    static func absoluteDate(forStopTime hhmm: String, operatingDayContaining date: Date) -> Date? {
+        guard let (hour, minute) = parseTime(hhmm) else { return nil }
+        let calendar = Calendar.current
+        let start = calendar.startOfDay(for: operatingDay(for: date))
+        return calendar.date(byAdding: .minute, value: serviceMinutes(hour: hour, minute: minute), to: start)
+    }
+
+    /// Trains at `stationName` the rider could plausibly be aboard right now: everything
+    /// still to come, plus anything that left within `recentWindow`, so the train you just
+    /// boarded is still on the list. `minutesUntilArrival` goes negative for those.
+    func rideCandidates(from stationName: String,
+                        northbound: Bool,
+                        at date: Date = Date(),
+                        recentWindow: TimeInterval = 45 * 60) -> [NextTrainInfo] {
+
+        let serviceDay = Self.currentServiceDay(for: date)
+        var candidates: [NextTrainInfo] = []
+
+        for schedule in schedules {
+            guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == serviceDay.isWeekend,
+                  schedule.direction.localizedCaseInsensitiveContains("North") == northbound
+            else { continue }
+
+            for train in schedule.trains {
+                guard let timeStr = train.stops[stationName],
+                      let when = Self.absoluteDate(forStopTime: timeStr, operatingDayContaining: date),
+                      when >= date.addingTimeInterval(-recentWindow)
+                else { continue }
+
+                candidates.append(NextTrainInfo(
+                    trainNumber: train.trainNo,
+                    trainType: train.type,
+                    stationName: stationName,
+                    minutesUntilArrival: Int((when.timeIntervalSince(date) / 60).rounded(.down)),
+                    arrivalTime: Self.displayTime(timeStr),
+                    arrivalDate: when,
+                    direction: schedule.direction
+                ))
+            }
+        }
+
+        return candidates.sorted { $0.arrivalDate < $1.arrivalDate }
+    }
+
+    /// One train's remaining run, from `stationName` onward in travel order. Stations
+    /// behind the boarding point are dropped, so the station you got on at is always the
+    /// first stop of the ride.
+    func itinerary(trainNumber: String,
+                   northbound: Bool,
+                   boardingAt stationName: String,
+                   at date: Date = Date()) -> RideItinerary? {
+
+        let serviceDay = Self.currentServiceDay(for: date)
+
+        for schedule in schedules {
+            guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == serviceDay.isWeekend,
+                  schedule.direction.localizedCaseInsensitiveContains("North") == northbound
+            else { continue }
+
+            guard let train = schedule.trains.first(where: { $0.trainNo == trainNumber }),
+                  train.stops[stationName] != nil
+            else { continue }
+
+            // The canonical list runs north to south, so southbound reads as-is.
+            let allNames = CaltrainStations.shared.stations.map(\.name)
+            let ordered = northbound ? allNames.reversed().map { $0 } : allNames
+            guard let start = ordered.firstIndex(where: { $0.caseInsensitiveCompare(stationName) == .orderedSame })
+            else { continue }
+
+            let stops: [RideStop] = ordered[start...].compactMap { name in
+                guard let timeStr = train.stops[name],
+                      let station = CaltrainStations.shared.station(named: name),
+                      let when = Self.absoluteDate(forStopTime: timeStr, operatingDayContaining: date)
+                else { return nil }
+                return RideStop(station: station, scheduled: when)
+            }
+
+            guard !stops.isEmpty else { continue }
+            return RideItinerary(trainNumber: train.trainNo,
+                                 trainType: train.type,
+                                 northbound: northbound,
+                                 stops: stops)
+        }
+
+        return nil
+    }
+}
