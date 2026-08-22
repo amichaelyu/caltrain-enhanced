@@ -162,7 +162,7 @@ struct ContentView: View {
     @State private var stationQuery = ""
     @State private var stationQueryEdited = false
     @FocusState private var stationFieldFocused: Bool
-    @State private var timetableDirection: TimetableDirection?
+    @State private var showTimetable = false
     @State private var direction: TimetableDirection = .northbound
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
@@ -185,7 +185,7 @@ struct ContentView: View {
                         DepartureBoard(direction: direction,
                                        trains: direction.isNorth ? northbound : southbound,
                                        onToggle: flipDirection,
-                                       onOpenTimetable: { timetableDirection = direction })
+                                       onOpenTimetable: { showTimetable = true })
                             .id(direction)
                             // Northbound arrives from the right, southbound from the left;
                             // the outgoing card leaves by the opposite edge.
@@ -213,8 +213,10 @@ struct ContentView: View {
         .sheet(isPresented: $showSettings) {
             SettingsView()
         }
-        .sheet(item: $timetableDirection) { direction in
-            TimetableSheet(direction: direction,
+        // The sheet edits `direction` through a binding, so flipping the timetable also
+        // flips the board behind it.
+        .sheet(isPresented: $showTimetable) {
+            TimetableSheet(direction: $direction,
                            stationName: location.activeStation?.name ?? "")
         }
         // Location follows the scene, not the view: tracking only runs while the app is
@@ -740,7 +742,7 @@ private struct TimetableSheet: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    @State private var direction: TimetableDirection
+    @Binding var direction: TimetableDirection
     @State private var serviceDay: ServiceDay
     @State private var grid: TimetableGrid
     /// The grid's horizontal scroll offset, mirrored into the fixed header row so the
@@ -752,13 +754,13 @@ private struct TimetableSheet: View {
     private let rowHeight: CGFloat = 48
     private let headerHeight: CGFloat = 64
 
-    init(direction: TimetableDirection, stationName: String) {
+    init(direction: Binding<TimetableDirection>, stationName: String) {
         self.stationName = stationName
         let day = CaltrainService.currentServiceDay()
-        _direction = State(initialValue: direction)
+        _direction = direction
         _serviceDay = State(initialValue: day)
         _grid = State(initialValue: CaltrainService.shared.timetableGrid(
-            from: stationName, northbound: direction.isNorth, serviceDay: day))
+            from: stationName, northbound: direction.wrappedValue.isNorth, serviceDay: day))
     }
 
     private func reloadGrid() {
