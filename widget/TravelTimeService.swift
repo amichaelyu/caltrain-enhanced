@@ -11,6 +11,10 @@ import CoreLocation
 
 struct TravelTimes: Codable, Equatable {
     let stationName: String
+    /// Where the estimate was measured from. Cached entries are only reusable from
+    /// roughly this spot — a walk time is meaningless once you've moved.
+    let originLatitude: Double
+    let originLongitude: Double
     let walkingMinutes: Int
     let bikingMinutes: Int
     let drivingMinutes: Int
@@ -18,6 +22,8 @@ struct TravelTimes: Codable, Equatable {
     let timestamp: Date
 
     var distanceMiles: Double { distanceMeters * 0.000621371 }
+
+    var origin: CLLocation { CLLocation(latitude: originLatitude, longitude: originLongitude) }
 }
 
 final class TravelTimeService {
@@ -27,19 +33,30 @@ final class TravelTimeService {
     /// costly for a widget, so we reuse recent results for the same station.
     private let cacheMaxAge: TimeInterval = 15 * 60
 
+    /// How far the user may drift before a cached estimate is thrown out. Matched to the
+    /// location manager's publish threshold so one real move invalidates exactly once.
+    private let cacheMaxDriftMeters: CLLocationDistance = 75
+
     // Typical urban cycling speed (~14.5 km/h). MKDirections has no cycling mode, so we
     // derive a biking estimate from the real walking-route distance returned by Apple Maps.
     private let cyclingSpeedMetersPerSecond = 4.0
 
     private func cacheKey(_ station: String) -> String { "travelTimes.\(station)" }
 
-    /// Last cached travel times for a station, if still fresh.
-    func cachedTravelTimes(for stationName: String) -> TravelTimes? {
+    /// Last cached travel times for a station, if still fresh *and* measured from close
+    /// enough to `origin`. Pass no origin to accept the entry regardless of where it was
+    /// taken — useful for painting a placeholder before the first fix arrives.
+    func cachedTravelTimes(for stationName: String,
+                           from origin: CLLocationCoordinate2D? = nil) -> TravelTimes? {
         guard let data = SharedConstants.sharedDefaults?.data(forKey: cacheKey(stationName)),
               let times = try? JSONDecoder().decode(TravelTimes.self, from: data),
               times.stationName == stationName,
               Date().timeIntervalSince(times.timestamp) < cacheMaxAge
         else { return nil }
+        if let origin {
+            let here = CLLocation(latitude: origin.latitude, longitude: origin.longitude)
+            guard here.distance(from: times.origin) <= cacheMaxDriftMeters else { return nil }
+        }
         return times
     }
 
@@ -49,7 +66,7 @@ final class TravelTimeService {
     func travelTimes(from origin: CLLocationCoordinate2D,
                      to station: CaltrainStation,
                      forceRefresh: Bool = false) async -> TravelTimes? {
-        if !forceRefresh, let cached = cachedTravelTimes(for: station.name) {
+        if !forceRefresh, let cached = cachedTravelTimes(for: station.name, from: origin) {
             return cached
         }
 
@@ -66,6 +83,8 @@ final class TravelTimeService {
 
         let times = TravelTimes(
             stationName: station.name,
+            originLatitude: origin.latitude,
+            originLongitude: origin.longitude,
             walkingMinutes: minutes(walkSeconds),
             bikingMinutes: minutes(bikeSeconds),
             drivingMinutes: minutes(driveSeconds),

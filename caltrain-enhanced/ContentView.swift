@@ -151,6 +151,7 @@ extension AnyTransition {
 
 struct ContentView: View {
     @ObservedObject private var location = SharedLocationManager.shared
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var northbound: [NextTrainInfo] = []
     @State private var southbound: [NextTrainInfo] = []
@@ -216,19 +217,28 @@ struct ContentView: View {
             TimetableSheet(direction: direction,
                            stationName: location.activeStation?.name ?? "")
         }
-        .onAppear {
-            location.requestLocation()
-            location.startContinuousLocationUpdates()
-            refreshTrains()
+        // Location follows the scene, not the view: tracking only runs while the app is
+        // actually on screen, and the clock stops ticking behind a backgrounded app.
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .active {
+                location.startTracking()
+                refreshTrains()
+            } else {
+                location.stopTracking()
+            }
         }
         .onReceive(ticker) { date in
+            guard scenePhase == .active else { return }
             now = date
             refreshTrains()
         }
         .onChange(of: location.activeStation?.name) {
             refreshTrains()
         }
-        .task(id: location.activeStation?.name) {
+        // Keyed on the origin as well as the station, so walking toward the platform
+        // actually revises the estimate. Fixes are thresholded upstream, so this only
+        // re-fires on real movement.
+        .task(id: routeKey) {
             await loadTravelTimes()
         }
     }
@@ -411,9 +421,21 @@ struct ContentView: View {
         southbound = upcoming.southbound
     }
 
+    /// Identity for the travel-time fetch: the station plus the published origin. Rounded
+    /// to ~11 m purely to keep the key stable against float noise.
+    private var routeKey: String {
+        let station = location.activeStation?.name ?? "-"
+        guard let origin = location.userLocation?.coordinate else { return station }
+        return String(format: "%@|%.4f,%.4f", station, origin.latitude, origin.longitude)
+    }
+
     private func loadTravelTimes() async {
-        guard let station = location.activeStation,
-              let origin = location.userLocation?.coordinate else { return }
+        guard let station = location.activeStation else { return }
+        guard let origin = location.userLocation?.coordinate else {
+            // No fix yet — show the last known estimate rather than an empty strip.
+            travelTimes = TravelTimeService.shared.cachedTravelTimes(for: station.name)
+            return
+        }
         let result = await TravelTimeService.shared.travelTimes(from: origin, to: station)
         await MainActor.run { self.travelTimes = result }
     }

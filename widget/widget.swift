@@ -297,7 +297,9 @@ struct widget: Widget {
         southbound: NextTrainInfo(trainNumber: "456", trainType: "Limited", stationName: "Palo Alto",
                                   minutesUntilArrival: 12, arrivalTime: "2:27 PM", arrivalDate: .now,
                                   direction: "Southbound to San Jose / Gilroy"),
-        travelTimes: TravelTimes(stationName: "Palo Alto", walkingMinutes: 11, bikingMinutes: 4,
+        travelTimes: TravelTimes(stationName: "Palo Alto",
+                                 originLatitude: 37.4419, originLongitude: -122.1430,
+                                 walkingMinutes: 11, bikingMinutes: 4,
                                  drivingMinutes: 3, distanceMeters: 900, timestamp: .now),
         stationName: "Palo Alto",
         error: nil

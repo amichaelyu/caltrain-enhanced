@@ -44,10 +44,12 @@ struct StationRouteMap: View {
         .task(id: taskKey) { await loadRoute() }
     }
 
-    /// Refetch whenever the mode, the station or a meaningfully moved origin changes.
+    /// Refetch whenever the mode, the station or the origin changes. Movement is already
+    /// thresholded where fixes are published, and repeat lookups hit the route cache, so
+    /// this can track the origin directly instead of coarsening it a second time.
     private var taskKey: String {
-        let lat = origin.map { String(format: "%.3f", $0.latitude) } ?? "-"
-        let lon = origin.map { String(format: "%.3f", $0.longitude) } ?? "-"
+        let lat = origin.map { String(format: "%.4f", $0.latitude) } ?? "-"
+        let lon = origin.map { String(format: "%.4f", $0.longitude) } ?? "-"
         return "\(station.name)|\(mode)|\(lat),\(lon)"
     }
 
