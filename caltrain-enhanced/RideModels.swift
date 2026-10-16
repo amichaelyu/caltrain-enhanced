@@ -2,11 +2,11 @@
 //  RideModels.swift
 //  caltrain-enhanced
 //
-//  The Ride tab's model. A ride is one train's run from the station you boarded at,
-//  and every estimate on the page comes from two things: the scheduled deltas between
-//  that train's stops, and where your phone says you are along the line. Matching your
-//  position to the corridor tells us how far behind schedule the train is running, and
-//  that one offset shifts every downstream stop. No live feed needed.
+//  The Ride tab's model. A ride is one train's run from the station you boarded at.
+//  When 511's live feed is tracking the train, its predictions drive every stop. Without
+//  it, estimates come from the scheduled deltas between stops plus where your phone says
+//  you are along the line: matching your position to the corridor tells us how far behind
+//  schedule the train is running, and that one offset shifts every downstream stop.
 //
 
 import Foundation
@@ -44,14 +44,26 @@ struct RideItinerary {
 
 // MARK: - Estimates
 
-/// Where the rider is along the line: between `segmentIndex` and the stop after it.
+/// What the numbers on the page are anchored to, best first.
+enum RideSource {
+    /// 511's live predictions for this train.
+    case feed
+    /// The rider's own location matched to the corridor.
+    case location
+    /// The printed schedule and nothing else.
+    case timetable
+}
+
+/// Where the train is along the line: between `segmentIndex` and the stop after it.
 struct RidePosition {
-    /// Index of the stop just behind the rider.
+    /// Index of the stop just behind the train.
     let segmentIndex: Int
     /// 0 at `segmentIndex`, 1 at the next stop.
     let fraction: Double
     /// Perpendicular distance to the segment — how much to trust the match.
     let metersFromLine: CLLocationDistance
+    /// Whose fix this is: the rider's phone (`.location`) or the train's own (`.feed`).
+    let source: RideSource
 }
 
 struct RideStopEstimate: Identifiable {
@@ -74,14 +86,16 @@ struct RideStopEstimate: Identifiable {
 
 struct RideEstimate {
     let stops: [RideStopEstimate]
-    /// How far behind schedule the train is running. Never negative — see `RideEstimator`.
+    /// How far behind schedule the train is running. From the feed this can dip slightly
+    /// negative; from a location fix it never does — see `RideEstimator`.
     let delaySeconds: TimeInterval
-    /// Non-nil only when the rider's location could be matched to this train's corridor.
+    /// Non-nil only when a fix — the train's or the rider's — matched this run's corridor.
     let position: RidePosition?
+    let source: RideSource
 
-    /// True when the numbers are anchored to the rider's position rather than the
-    /// timetable alone.
-    var isLive: Bool { position != nil }
+    /// True when the numbers are anchored to something real rather than the timetable
+    /// alone.
+    var isLive: Bool { source != .timetable }
 
     var delayMinutes: Int { Int((delaySeconds / 60).rounded()) }
 
@@ -109,16 +123,25 @@ enum RideEstimator {
     /// than the train is late.
     private static let maxDelaySeconds: TimeInterval = 45 * 60
 
-    /// Projects the schedule forward from wherever the rider actually is.
+    /// How close the rider's fix has to be to the train's own to count as aboard it. The
+    /// feed's position lags by up to a minute, so this is generous.
+    private static let aboardMeters: CLLocationDistance = 2500
+
+    /// The live feed's predictions when it's tracking this train; otherwise the schedule
+    /// projected forward from wherever the rider actually is.
     static func estimate(for itinerary: RideItinerary,
                          userLocation: CLLocation?,
+                         live: LiveTrain? = nil,
                          now: Date = Date()) -> RideEstimate {
+        if let live, let estimate = estimate(for: itinerary, live: live, userLocation: userLocation, now: now) {
+            return estimate
+        }
 
         // Before the train is due out of the boarding station the ride hasn't started, so
         // wherever the rider happens to be says nothing about it — a fix up the line would
         // otherwise mark stops passed on a train still sitting at the platform.
         let hasLeft = itinerary.origin.map { now >= $0.scheduled } ?? false
-        let position = hasLeft ? userLocation.flatMap { locate($0, on: itinerary) } : nil
+        let position = hasLeft ? userLocation.flatMap { locate($0, on: itinerary, source: .location) } : nil
         let delay = position.map { delaySeconds(at: $0, on: itinerary, now: now) } ?? 0
 
         let originScheduled = itinerary.origin?.scheduled
@@ -143,7 +166,63 @@ enum RideEstimator {
             previous = stop.scheduled
         }
 
-        return RideEstimate(stops: stops, delaySeconds: delay, position: position)
+        return RideEstimate(stops: stops, delaySeconds: delay, position: position,
+                            source: position == nil ? .timetable : .location)
+    }
+
+    /// The ride as 511 sees it. The feed lists only the stops a train has still to make, so
+    /// the first of ours it lists is the train's next stop, and everything before it is
+    /// behind it. Nil when none of our stops are listed — not running, or only the
+    /// terminus left, which 511 doesn't predict — so the caller falls back.
+    private static func estimate(for itinerary: RideItinerary,
+                                 live: LiveTrain,
+                                 userLocation: CLLocation?,
+                                 now: Date) -> RideEstimate? {
+        let stops = itinerary.stops
+        guard let next = stops.firstIndex(where: { live.stop(named: $0.station.name) != nil }),
+              let nextCall = live.stop(named: stops[next].station.name)
+        else { return nil }
+
+        // Carried onto the stops the feed doesn't predict: the ones behind the train, and
+        // the terminus.
+        let delay = nextCall.delay
+
+        // Only once the train is out of the boarding station is there a leg to place it on.
+        // Either fix has to put it on the leg the feed says it's on, or it's a stale or
+        // wandering fix and the clock places it instead.
+        var position: RidePosition?
+        if next > 0 {
+            let train = live.coordinate.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+            let rider = userLocation.flatMap { fix in
+                // The rider's phone is fresher than the feed, but only says anything about
+                // the train if they're actually on it.
+                train.map { fix.distance(from: $0) <= aboardMeters } == true
+                    ? locate(fix, on: itinerary, source: .location) : nil
+            }
+            position = [rider, train.flatMap { locate($0, on: itinerary, source: .feed) }]
+                .compactMap { $0 }
+                .first { $0.segmentIndex == next - 1 }
+        }
+
+        let originScheduled = itinerary.origin?.scheduled
+        var previous: Date?
+        var estimates: [RideStopEstimate] = []
+
+        for (index, stop) in stops.enumerated() {
+            let projected = live.stop(named: stop.station.name)?.expected
+                ?? stop.scheduled.addingTimeInterval(delay)
+            estimates.append(RideStopEstimate(
+                station: stop.station,
+                scheduled: stop.scheduled,
+                projected: projected,
+                minutesFromPrevious: previous.map { minutes(from: $0, to: stop.scheduled) },
+                minutesFromOrigin: originScheduled.map { minutes(from: $0, to: stop.scheduled) } ?? 0,
+                hasPassed: index < next || projected <= now
+            ))
+            previous = stop.scheduled
+        }
+
+        return RideEstimate(stops: estimates, delaySeconds: delay, position: position, source: .feed)
     }
 
     private static func minutes(from start: Date, to end: Date) -> Int {
@@ -167,9 +246,11 @@ enum RideEstimator {
         return min(max(0, now.timeIntervalSince(implied)), maxDelaySeconds)
     }
 
-    /// Finds the leg of the run the rider is on, by taking the closest leg of track.
+    /// Finds the leg of the run a fix is on, by taking the closest leg of track.
     /// Returns nil when no leg is close enough to believe.
-    private static func locate(_ location: CLLocation, on itinerary: RideItinerary) -> RidePosition? {
+    private static func locate(_ location: CLLocation,
+                               on itinerary: RideItinerary,
+                               source: RideSource) -> RidePosition? {
         let stops = itinerary.stops
         guard stops.count >= 2 else { return nil }
 
@@ -186,7 +267,8 @@ enum RideEstimator {
             if best == nil || projection.meters < best!.metersFromLine {
                 best = RidePosition(segmentIndex: index,
                                     fraction: projection.fraction,
-                                    metersFromLine: projection.meters)
+                                    metersFromLine: projection.meters,
+                                    source: source)
             }
         }
 
@@ -249,15 +331,18 @@ enum RideEstimator {
 // MARK: - Drawing position
 
 /// Where the train sits along the run: the stop just behind it, plus how far it has got
-/// towards the next one. Two ways to arrive at one, in order of preference — the rider's
-/// own fix matched to the corridor, or, when the phone has nothing near the line, plain
-/// interpolation of the projected times.
+/// towards the next one. Two ways to arrive at one, in order of preference — a fix (the
+/// rider's or the train's) matched to the corridor, or, failing that, plain interpolation
+/// of the projected times.
 struct RidePlacement {
     let segmentIndex: Int
     /// 0 at `segmentIndex`, 1 at the stop after it.
     let fraction: Double
-    /// True when this came from a location fix rather than the clock.
-    let isLive: Bool
+    /// `.timetable` only when nothing live went into it: interpolating 511's predicted
+    /// times still counts as `.feed`.
+    let source: RideSource
+
+    var isLive: Bool { source != .timetable }
 }
 
 extension RideEstimate {
@@ -272,8 +357,10 @@ extension RideEstimate {
         if let position, position.segmentIndex + 1 < stops.count {
             return RidePlacement(segmentIndex: position.segmentIndex,
                                  fraction: position.fraction,
-                                 isLive: true)
+                                 source: position.source)
         }
+
+        let clockSource: RideSource = source == .feed ? .feed : .timetable
 
         // Otherwise walk the projected times and find the leg `now` falls inside.
         for index in 0..<(stops.count - 1) {
@@ -284,11 +371,11 @@ extension RideEstimate {
             let fraction = span > 0 ? now.timeIntervalSince(departure) / span : 0
             return RidePlacement(segmentIndex: index,
                                  fraction: min(max(fraction, 0), 1),
-                                 isLive: false)
+                                 source: clockSource)
         }
 
         // Past the last stop on the run.
-        return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, isLive: false)
+        return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, source: clockSource)
     }
 }
 

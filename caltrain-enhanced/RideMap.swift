@@ -65,9 +65,7 @@ struct RideMap: View {
         .overlay(alignment: .topTrailing) { followButton }
         .overlay(alignment: .bottomLeading) { sourceBadge }
         .onChange(of: cameraKey, initial: true) { _, _ in frame() }
-        .accessibilityLabel(placement?.isLive == true
-                            ? "Map of the run, train placed from your location"
-                            : "Map of the run, train placed from the timetable")
+        .accessibilityLabel("Map of the run, train placed \(sourceLabel.lowercased())")
     }
 
     // MARK: Geometry
@@ -173,13 +171,24 @@ struct RideMap: View {
         .accessibilityHint(followsTrain ? "Show the whole run" : "Follow the train")
     }
 
-    /// Says plainly whether the puck is your phone or the timetable, so a train drawn in
-    /// the wrong place is never mistaken for a fact.
+    /// Says plainly whether the puck is 511, your phone, or the timetable, so a train drawn
+    /// in the wrong place is never mistaken for a fact. The 511 wording doubles as the
+    /// attribution their data terms ask for.
+    private var sourceLabel: String {
+        switch placement?.source ?? estimate.source {
+        case .feed: "Live from 511.org"
+        case .location: "From your location"
+        case .timetable: "From the timetable"
+        }
+    }
+
     private var sourceBadge: some View {
-        let live = placement?.isLive == true
+        let source = placement?.source ?? estimate.source
+        let live = source != .timetable
         return HStack(spacing: 4) {
-            Image(systemName: live ? "dot.radiowaves.left.and.right" : "clock")
-            Text(live ? "From your location" : "From the timetable")
+            Image(systemName: source == .location ? "location.fill"
+                  : live ? "dot.radiowaves.left.and.right" : "clock")
+            Text(sourceLabel)
         }
         .font(.caption2.weight(.semibold))
         .foregroundStyle(live ? Color.caltrainRed : .secondary)

@@ -15,6 +15,7 @@ import CoreLocation
 struct RideView: View {
     @EnvironmentObject private var ride: RideSession
     @ObservedObject private var location = SharedLocationManager.shared
+    @ObservedObject private var live = CaltrainLiveService.shared
     @Environment(\.scenePhase) private var scenePhase
 
     /// Shared with the Plan tab, so the direction you were browsing is the direction the
@@ -42,6 +43,9 @@ struct RideView: View {
                     if let itinerary {
                         let estimate = RideEstimator.estimate(for: itinerary,
                                                               userLocation: location.userLocation,
+                                                              live: live.train(itinerary.trainNumber,
+                                                                               northbound: itinerary.northbound,
+                                                                               at: now),
                                                               now: now)
                         RideDestinationCard(estimate: estimate,
                                             destinationName: ride.destinationName,
@@ -110,7 +114,9 @@ struct RideView: View {
             } else {
                 location.stopTracking()
             }
+            updateLiveFeed()
         }
+        .onChange(of: ride.isActive) { _, _ in updateLiveFeed() }
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
             now = date
@@ -146,6 +152,15 @@ struct RideView: View {
         .frame(maxWidth: .infinity)
         .padding(28)
         .cardBackground()
+    }
+
+    /// Only poll while there's a ride on screen to put the predictions on.
+    private func updateLiveFeed() {
+        if scenePhase == .active && ride.isActive {
+            live.start()
+        } else {
+            live.stop()
+        }
     }
 
     private func startRide(_ trainNumber: String) {
@@ -194,16 +209,33 @@ private struct RideTrainTile: View {
 
 // MARK: - Status
 
-/// On time or not, and whether that's your phone talking or just the timetable.
+/// On time or not, and whether that's 511, your phone, or just the timetable talking.
 private struct RideStatusPill: View {
     let estimate: RideEstimate
 
+    private var icon: String {
+        switch estimate.source {
+        case .feed: "dot.radiowaves.left.and.right"
+        case .location: "location.fill"
+        case .timetable: "clock"
+        }
+    }
+
+    private var sourceDescription: String {
+        switch estimate.source {
+        case .feed: "live from 511.org"
+        case .location: "tracked from your location"
+        case .timetable: "timetable only"
+        }
+    }
+
     var body: some View {
         let late = estimate.delayMinutes
-        let onTime = late == 0
+        // The feed runs a few seconds early as often as late; early reads as on time.
+        let onTime = late <= 0
         let color = onTime ? Color.secondary : Color.caltrainRed
         return HStack(spacing: 5) {
-            Image(systemName: estimate.isLive ? "location.fill" : "clock")
+            Image(systemName: icon)
                 .font(.system(size: 9, weight: .bold))
             Text(onTime ? (estimate.isLive ? "On time" : "On schedule") : "\(late) min late")
                 .font(.system(size: 11, weight: .bold, design: .rounded))
@@ -215,8 +247,8 @@ private struct RideStatusPill: View {
         .padding(.vertical, 4)
         .background(Capsule(style: .continuous).fill(color.opacity(0.12)))
         .accessibilityLabel(estimate.isLive
-                            ? (onTime ? "On time, tracked from your location" : "\(late) minutes late, tracked from your location")
-                            : "Timetable only, no location fix yet")
+                            ? (onTime ? "On time, \(sourceDescription)" : "\(late) minutes late, \(sourceDescription)")
+                            : "Timetable only, no live data yet")
     }
 }
 
