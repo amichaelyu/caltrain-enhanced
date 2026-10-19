@@ -259,7 +259,9 @@ struct ContentView: View {
         }
         .onAppear { isVisible = true; updateLiveFeed() }
         .onDisappear { isVisible = false; updateLiveFeed() }
-        .onReceive(live.$feed) { _ in refreshTrains() }
+        // Not `onReceive(live.$feed)`: that fires before the new feed is stored, so the
+        // board would redraw from the old one and wait for the next tick to catch up.
+        .onChange(of: live.feed?.fetched) { refreshTrains() }
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
             now = date
