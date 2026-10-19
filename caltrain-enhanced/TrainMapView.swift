@@ -15,7 +15,7 @@ import UIKit
 struct TrainMapView: View {
     @EnvironmentObject private var ride: RideSession
     @ObservedObject private var live = CaltrainLiveService.shared
-    @ObservedObject private var location = SharedLocationManager.shared
+    @StateObject private var location = MapLocationSource()
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.colorScheme) private var colorScheme
 
@@ -100,6 +100,9 @@ struct TrainMapView: View {
         }
         .onAppear { isVisible = true; advance(to: Date(), glide: false); updateLiveFeed() }
         .onDisappear { isVisible = false; updateLiveFeed() }
+        .onChange(of: isVisible && scenePhase == .active, initial: true) { _, wanted in
+            if wanted { location.start() } else { location.stop() }
+        }
     }
 
     /// How much of the map's foot the train sheet is hiding. The sheet is a separate
@@ -126,8 +129,8 @@ struct TrainMapView: View {
                 }
             }
 
-            UserAnnotation()
-
+            // No `UserAnnotation()`: MapKit paints it under the trip, where the line
+            // crossed it out. The dot is drawn over the trip in `pucks` instead.
             ForEach(shownFixes) { fix in
                 // Anchored by its foot, so the number floats above the line instead of
                 // sitting on a station's dot.
@@ -143,8 +146,8 @@ struct TrainMapView: View {
         }
         .safeAreaPadding(.bottom, sheetCover)
         .mapStyle(.standard(pointsOfInterest: .excludingAll))
-        // The app's red tint reaches the "you are here" dot and made it look like a
-        // train; the map gets the stock blue back.
+        // The app's red tint reaches the location button and made it look like a
+        // train's; the map gets the stock blue back.
         .tint(Color(.systemBlue))
         .mapControls {
             MapUserLocationButton()
@@ -164,6 +167,12 @@ struct TrainMapView: View {
     /// same screen points. The selected one goes on last so it sits over the others.
     private func pucks(proxy: MapProxy, at date: Date) -> some View {
         ZStack {
+            // You, under the trains: the trip's line hid MapKit's own dot.
+            if let coordinate = location.coordinate,
+               let point = proxy.convert(coordinate, to: .local) {
+                MapUserDot()
+                    .position(point)
+            }
             ForEach(shownFixes.sorted { ($0.id == selectedID ? 1 : 0) < ($1.id == selectedID ? 1 : 0) }) { fix in
                 if let point = proxy.convert(drawnCoordinate(fix, at: date), to: .local) {
                     MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
@@ -482,4 +491,66 @@ private struct MapTrainPuck: View {
         .overlay(Capsule().strokeBorder(Color(.systemBackground), lineWidth: isSelected ? 2.5 : 1.5))
         .scaleEffect(isSelected ? 1.25 : 1, anchor: .bottom)
     }
+}
+
+// MARK: - You
+
+/// The stock "you are here" dot, drawn by hand so it can sit over the trip.
+private struct MapUserDot: View {
+    var body: some View {
+        Circle()
+            .fill(Color(.systemBlue))
+            .frame(width: 16, height: 16)
+            .overlay(Circle().strokeBorder(.white, lineWidth: 3))
+            .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
+            .accessibilityLabel("Your location")
+    }
+}
+
+/// Where you are, for the map alone. `SharedLocationManager` is tuned for naming the
+/// nearest station, so it asks for 100 m fixes and only republishes after a 75 m move;
+/// drawn on a map that reads as a dot that sits still, then hops. This one follows
+/// you properly while the map is on screen and stops the moment it isn't. It never
+/// asks for permission itself: the map's location button does that.
+@MainActor
+private final class MapLocationSource: NSObject, ObservableObject, CLLocationManagerDelegate {
+    @Published private(set) var coordinate: CLLocationCoordinate2D?
+
+    private let manager = CLLocationManager()
+    private var wanted = false
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyBest
+        manager.distanceFilter = 5
+    }
+
+    func start() { wanted = true; resolve() }
+    func stop() { wanted = false; resolve() }
+
+    private var authorized: Bool {
+        manager.authorizationStatus == .authorizedWhenInUse || manager.authorizationStatus == .authorizedAlways
+    }
+
+    private func resolve() {
+        if wanted && authorized {
+            manager.startUpdatingLocation()
+        } else {
+            manager.stopUpdatingLocation()
+            if !authorized { coordinate = nil }
+        }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        guard let location = locations.last, location.horizontalAccuracy >= 0 else { return }
+        let coordinate = location.coordinate
+        Task { @MainActor in self.coordinate = coordinate }
+    }
+
+    nonisolated func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        Task { @MainActor in self.resolve() }
+    }
+
+    nonisolated func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {}
 }
