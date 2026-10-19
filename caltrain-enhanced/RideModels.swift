@@ -372,10 +372,15 @@ extension RideEstimate {
         // Otherwise walk the projected times and find the leg `now` falls inside.
         for index in 0..<(stops.count - 1) {
             let departure = stops[index].projected
-            let arrival = stops[index + 1].projected
-            guard now < arrival else { continue }
-            let span = arrival.timeIntervalSince(departure)
-            let fraction = span > 0 ? now.timeIntervalSince(departure) / span : 0
+            let next = stops[index + 1].projected
+            guard now < next else { continue }
+            // Standing at the next platform until its time comes round.
+            let arrival = arrivalTime(atStopAfter: index)
+            guard now < arrival else {
+                return RidePlacement(segmentIndex: index, fraction: 1, source: clockSource)
+            }
+            let travel = arrival.timeIntervalSince(departure)
+            let fraction = travel > 0 ? now.timeIntervalSince(departure) / travel : 0
             return RidePlacement(segmentIndex: index,
                                  fraction: min(max(fraction, 0), 1),
                                  source: clockSource)
@@ -385,12 +390,25 @@ extension RideEstimate {
         return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, source: clockSource)
     }
 
+    /// How long a train stands at a platform. The timetable and 511 give one time per
+    /// stop, and it's when the train leaves; it pulls in about this much earlier.
+    private static let dwell: TimeInterval = 45
+
+    /// When the train pulls into the stop after `index`: a dwell before its listed time,
+    /// but never more than a third of a short leg, so the train still visibly moves.
+    private func arrivalTime(atStopAfter index: Int) -> Date {
+        let departure = stops[index].projected
+        let next = stops[index + 1].projected
+        let leg = max(next.timeIntervalSince(departure), 0)
+        return next.addingTimeInterval(-min(Self.dwell, leg / 3))
+    }
+
     /// A fix says where the train was when it was taken, and 511's can be a minute or two
     /// old. Carry it on toward the next stop at the pace that gets it there at its
     /// projected time, and hold it at the platform until a newer fix says it has left.
     private func extrapolated(_ position: RidePosition, to now: Date) -> Double {
         let elapsed = now.timeIntervalSince(position.recordedAt)
-        let remaining = stops[position.segmentIndex + 1].projected.timeIntervalSince(position.recordedAt)
+        let remaining = arrivalTime(atStopAfter: position.segmentIndex).timeIntervalSince(position.recordedAt)
         guard elapsed > 0, remaining > 0 else { return position.fraction }
         return min(1, position.fraction + (1 - position.fraction) * elapsed / remaining)
     }
