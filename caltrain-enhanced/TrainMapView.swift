@@ -26,6 +26,11 @@ struct TrainMapView: View {
     @State private var fixes: [TrainFix] = []
     /// Where each train was drawn when that tick landed: the start of its glide.
     @State private var glideStart: [String: CLLocationCoordinate2D] = [:]
+    /// Where each glide ends: the train's new position, unless that's further than a
+    /// train could go in a tick, in which case the glide only goes that far toward it.
+    @State private var glideEnd: [String: CLLocationCoordinate2D] = [:]
+    /// The line from the trip's train to your boarding stop while it's still on its way.
+    @State private var approach: RideRoute?
     @State private var tickDate = Date()
     /// The trip's stretch of line, boarding platform to your stop. Nil off a trip.
     @State private var trip: RideRoute?
@@ -95,13 +100,24 @@ struct TrainMapView: View {
                 tripTrail(trip, at: date)
             }
 
+            // Still coming to get you: a dotted line from the train to your platform.
+            if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }) {
+                let line = approach.slice(from: approach.distance(of: drawnCoordinate(fix, at: tickDate)),
+                                          to: approach.length)
+                if line.count >= 2 {
+                    MapPolyline(coordinates: line)
+                        .stroke(rideTint.opacity(colorScheme == .dark ? 0.6 : 0.5),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
+                }
+            }
+
             if let destination = ride.destinationName.flatMap(CaltrainStations.shared.station(named:)), rideID != nil {
                 Annotation(destination.name, coordinate: destination.coordinate, anchor: .center) {
                     ZStack {
-                        Circle().fill(Color.caltrainRed).frame(width: 20, height: 20)
+                        Circle().fill(rideTint).frame(width: 20, height: 20)
                         Image(systemName: "flag.fill")
                             .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(Color.onDirection(northbound: ride.northbound))
                     }
                     .shadow(radius: 1, y: 0.5)
                 }
@@ -161,63 +177,68 @@ struct TrainMapView: View {
     /// How long one pulse takes to run from the train to your stop.
     private static let pulsePeriod: TimeInterval = 2.4
 
-    /// Your stretch of line: faint ahead, solid behind the train, and pulses running from
-    /// the train on toward your stop. The pulses are a gentle shimmer over the faint line,
-    /// not a second line: a shade darker in light mode, a shade lighter in dark mode.
+    /// The trip's train's colour.
+    private var rideTint: Color { .direction(northbound: ride.northbound) }
+
+    /// Your stretch of line: faint ahead, solid behind the train, and pulses running on
+    /// toward your stop. The lines only change once a tick: MapKit draws lines in tiles in
+    /// the background, and redrawing them every frame left blurry blobs where it couldn't
+    /// keep up. The pulses are beads riding on the line, which it can move every frame.
     @MapContentBuilder
     private func tripTrail(_ trip: RideRoute, at date: Date) -> some MapContent {
-        let done = rideTrainDistance(on: trip, at: date)
-        let remaining = max(trip.length - done, 0)
-        let pulseLength = max(remaining * 0.18, 300)
+        let done = rideTrainDistance(on: trip, at: tickDate)
         let style = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
 
         MapPolyline(coordinates: trip.coordinates)
-            .stroke(Color.caltrainRed.opacity(colorScheme == .dark ? 0.45 : 0.32), style: style)
+            .stroke(rideTint.opacity(colorScheme == .dark ? 0.45 : 0.32), style: style)
 
         let ridden = trip.slice(from: 0, to: done)
         if ridden.count >= 2 {
-            MapPolyline(coordinates: ridden).stroke(Color.caltrainRed, style: style)
+            MapPolyline(coordinates: ridden).stroke(rideTint, style: style)
         }
 
-        // Two pulses half a period apart, each a short comet that fades toward its tail.
-        ForEach(pulses(done: done, remaining: remaining, length: pulseLength, at: date), id: \.id) { piece in
-            MapPolyline(coordinates: trip.slice(from: piece.from, to: piece.to))
-                .stroke(pulseColor.opacity(piece.strength * (colorScheme == .dark ? 0.3 : 0.22)), style: style)
+        ForEach(beads(on: trip, done: done, at: date)) { bead in
+            Annotation("", coordinate: bead.coordinate, anchor: .center) {
+                Circle()
+                    .fill(rideTint.opacity(bead.strength * (colorScheme == .dark ? 0.5 : 0.4)))
+                    .frame(width: bead.size, height: bead.size)
+                    .allowsHitTesting(false)
+            }
+            .annotationTitles(.hidden)
         }
     }
 
-    private struct PulsePiece {
+    private struct Bead: Identifiable {
         let id: Int
-        let from: Double
-        let to: Double
-        /// 1 at the head of the pulse, fading toward its tail.
+        let coordinate: CLLocationCoordinate2D
+        /// 1 at the head of a pulse, fading toward its tail.
         let strength: Double
+        let size: CGFloat
     }
 
-    /// Laid over the faint line: the same red deepens it on a light map, a paler red lifts
-    /// it on a dark one.
-    private var pulseColor: Color {
-        colorScheme == .dark ? Color(red: 1.0, green: 0.55, blue: 0.58) : Color.caltrainRed
-    }
-
-    private func pulses(done: Double, remaining: Double, length: Double, at date: Date) -> [PulsePiece] {
+    /// Two pulses half a period apart, each a head bead and a short fading tail, running
+    /// from the train (or your platform, before it's there) to your stop.
+    private func beads(on trip: RideRoute, done: Double, at date: Date) -> [Bead] {
+        let remaining = trip.length - done
         guard remaining > 1 else { return [] }
+        let tail = max(remaining * 0.15, 250)
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.pulsePeriod)
             / Self.pulsePeriod
-        var pieces: [PulsePiece] = []
+        var beads: [Bead] = []
         for pulse in 0..<2 {
             let t = (phase + Double(pulse) / 2).truncatingRemainder(dividingBy: 1)
-            let head = done + (remaining + length) * t
-            for step in 0..<3 {
-                let to = head - length * Double(step) / 3
-                let from = head - length * Double(step + 1) / 3
-                let lo = max(from, done), hi = min(to, done + remaining)
-                guard hi > lo else { continue }
-                pieces.append(PulsePiece(id: pulse * 3 + step, from: lo, to: hi,
-                                         strength: 1 - Double(step) / 3))
+            let head = done + (remaining + tail) * t
+            for step in 0..<4 {
+                let at = head - tail * Double(step) / 4
+                guard at > done, at < trip.length else { continue }
+                let strength = 1 - Double(step) / 4
+                beads.append(Bead(id: pulse * 4 + step,
+                                  coordinate: trip.point(at: at),
+                                  strength: strength,
+                                  size: 5 + 3 * strength))
             }
         }
-        return pieces
+        return beads
     }
 
     /// How far along your stretch the ride's train is drawn. Zero until it reaches your
@@ -238,7 +259,7 @@ struct TrainMapView: View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: "tram.fill")
-                    .foregroundStyle(Color.caltrainRed)
+                    .foregroundStyle(rideTint)
                 Text("#\(ride.trainNumber ?? "")\(ride.destinationName.map { " to \($0)" } ?? "")")
                     .font(.subheadline.weight(.semibold))
                     .lineLimit(1)
@@ -282,13 +303,42 @@ struct TrainMapView: View {
             ? Dictionary(fixes.map { ($0.id, drawnCoordinate($0, at: date)) }, uniquingKeysWith: { a, _ in a })
             : [:]
         fixes = currentFixes(at: date)
+        glideEnd = Dictionary(fixes.compactMap { fix in
+            glideStart[fix.id].map { (fix.id, Self.capped(from: $0, toward: fix.coordinate)) }
+        }, uniquingKeysWith: { a, _ in a })
+        approach = makeApproach()
         tickDate = date
+    }
+
+    /// Fastest a correction may move a train, in metres per second. A fresh 511 fix that
+    /// disagrees with the estimate is caught up with at about train speed over a few
+    /// seconds, instead of in one lurch.
+    private static let catchUpSpeed: Double = 70
+
+    private static func capped(from start: CLLocationCoordinate2D,
+                               toward target: CLLocationCoordinate2D) -> CLLocationCoordinate2D {
+        let gap = CLLocation(latitude: start.latitude, longitude: start.longitude)
+            .distance(from: CLLocation(latitude: target.latitude, longitude: target.longitude))
+        let step = catchUpSpeed * tick
+        guard gap > step else { return target }
+        return CaltrainCorridor.interpolate(start, target, step / gap)
+    }
+
+    /// The trip's train's stretch from the stop behind it to your boarding stop. Nil once
+    /// it's there, or off a trip.
+    private func makeApproach() -> RideRoute? {
+        guard let rideID, let fix = fixes.first(where: { $0.id == rideID }),
+              let origin = ride.originName, let boardIndex = fix.run.index(of: origin),
+              fix.placement.segmentIndex < boardIndex,
+              !(fix.placement.segmentIndex == boardIndex - 1 && fix.placement.fraction >= 1)
+        else { return nil }
+        return RideRoute(stations: fix.run.stops[fix.placement.segmentIndex...boardIndex].map(\.station))
     }
 
     private func drawnCoordinate(_ fix: TrainFix, at date: Date) -> CLLocationCoordinate2D {
         guard let start = glideStart[fix.id] else { return fix.coordinate }
         let t = min(max(date.timeIntervalSince(tickDate) / Self.tick, 0), 1)
-        return CaltrainCorridor.interpolate(start, fix.coordinate, t)
+        return CaltrainCorridor.interpolate(start, glideEnd[fix.id] ?? fix.coordinate, t)
     }
 
     /// Count of trains out, and how many of them 511 is actually tracking. 511's
@@ -327,14 +377,15 @@ struct TrainMapView: View {
 
 // MARK: - Puck
 
-/// Train number with an arrow for its direction. Red when 511 placed it, grey when the
-/// timetable did.
+/// Train number with an arrow for its direction, in the direction's colour: solid when
+/// 511 placed it, faded when only the timetable did.
 private struct MapTrainPuck: View {
     let fix: TrainFix
     let isSelected: Bool
 
     var body: some View {
-        let color = fix.isLive ? Color.caltrainRed : Color.gray
+        // Direction picks the colour; a train only the timetable is placing is faded.
+        let color = Color.direction(northbound: fix.run.northbound).opacity(fix.isLive ? 1 : 0.45)
         VStack(spacing: 0) {
             label(color)
             // Stem down to where the train actually is.
@@ -342,7 +393,7 @@ private struct MapTrainPuck: View {
             Circle()
                 .fill(color)
                 .frame(width: 8, height: 8)
-                .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+                .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 1.5))
         }
         .shadow(radius: 2, y: 1)
     }
@@ -355,11 +406,11 @@ private struct MapTrainPuck: View {
                 .font(.system(size: 11, weight: .bold, design: .rounded))
                 .monospacedDigit()
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(Color.onDirection(northbound: fix.run.northbound))
         .padding(.horizontal, 6)
         .padding(.vertical, 3)
         .background(Capsule().fill(color))
-        .overlay(Capsule().strokeBorder(.white, lineWidth: isSelected ? 2.5 : 1.5))
+        .overlay(Capsule().strokeBorder(Color(.systemBackground), lineWidth: isSelected ? 2.5 : 1.5))
         .scaleEffect(isSelected ? 1.25 : 1, anchor: .bottom)
     }
 }

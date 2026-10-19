@@ -14,6 +14,17 @@ import UIKit
 extension Color {
     /// Restrained Caltrain red — the single accent in an otherwise monochrome UI.
     static let caltrainRed = Color(red: 0.796, green: 0.125, blue: 0.180) // #CB202E
+
+    /// A train's colour wherever it appears: red northbound, ink southbound (black, or
+    /// white in dark mode). Live data is marked with its icon, not its colour.
+    static func direction(northbound: Bool) -> Color {
+        northbound ? .caltrainRed : .primary
+    }
+
+    /// Text and icons drawn on a solid `direction` fill.
+    static func onDirection(northbound: Bool) -> Color {
+        northbound ? .white : Color(.systemBackground)
+    }
 }
 
 private enum Metrics {
@@ -570,13 +581,16 @@ private struct DepartureBoard: View {
     private var directionToggle: some View {
         Button(action: onToggle) {
             HStack(spacing: 8) {
-                Image(systemName: direction.systemImage)
-                    .font(.system(size: 13, weight: .bold))
-
-                Text(direction.title)
-                    .font(.caption)
-                    .textCase(.uppercase)
-                    .tracking(1.2)
+                // The direction is the card's heading now the train itself is the title.
+                HStack(spacing: 8) {
+                    Image(systemName: direction.systemImage)
+                        .font(.system(size: 14, weight: .heavy))
+                    Text(direction.title)
+                        .font(.subheadline.weight(.bold))
+                        .textCase(.uppercase)
+                        .tracking(1.2)
+                }
+                .foregroundStyle(.primary)
 
                 Spacer(minLength: 8)
 
@@ -684,17 +698,22 @@ private struct DepartureClock: View {
     let train: NextTrainInfo
     let size: CGFloat
 
+    private var tint: Color {
+        .direction(northbound: train.direction.localizedCaseInsensitiveContains("North"))
+    }
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
             if let expected = train.expectedDate {
                 Image(systemName: "dot.radiowaves.left.and.right")
                     .font(.system(size: size * 0.6, weight: .bold))
-                    .foregroundStyle(Color.caltrainRed)
+                    .foregroundStyle(tint)
                 Text(RideFormat.clock(expected))
                     .font(.system(size: size, weight: .semibold, design: .rounded))
-                    .foregroundStyle(Color.caltrainRed)
+                    .foregroundStyle(tint)
                 if train.isOffSchedule {
-                    Text(train.arrivalTime)
+                    // No AM/PM: the live time beside it already says which.
+                    Text(train.arrivalDate.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()))
                         .font(.system(size: size * 0.8, design: .rounded))
                         .strikethrough()
                         .foregroundStyle(.tertiary)
@@ -724,21 +743,14 @@ private struct DepartureRow: View {
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(direction.destination)
-                    .font(.system(size: 22, weight: .semibold, design: .rounded))
-
+                // The train is the title: every train in this direction ends up at the
+                // same terminus, so naming it told you nothing the heading didn't.
                 if let train {
-                    HStack(spacing: 7) {
-                        DepartureClock(train: train, size: 13)
-                        Text("· #\(train.trainNumber)")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        TrainTypeBadge(trainClass: TrainClass(train.trainType))
-                    }
+                    trainLabel(train)
+                    DepartureClock(train: train, size: 13)
                 } else {
                     Text("No more trains today")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .font(.system(size: 22, weight: .semibold, design: .rounded))
                 }
             }
 
@@ -749,6 +761,16 @@ private struct DepartureRow: View {
         .padding(.horizontal, 20)
         .padding(.top, 4)
         .padding(.bottom, 18)
+    }
+
+    private func trainLabel(_ train: NextTrainInfo) -> some View {
+        HStack(spacing: 8) {
+            Text("#\(train.trainNumber)")
+                .font(.system(size: 22, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+            TrainTypeBadge(trainClass: TrainClass(train.trainType))
+        }
+        .fixedSize()
     }
 
     @ViewBuilder private var countdown: some View {
@@ -886,14 +908,15 @@ private struct TravelTile: View {
 
 /// Stations down, trains across — a printed-timetable view of the upcoming trains from
 /// the current station, opened by tapping a direction.
-/// One time in the timetable. Black from the printed schedule; red for a train 511 is
-/// tracking, showing 511's estimate with the printed time struck through under it when the
-/// two differ.
+/// One time in the timetable. Plain from the printed schedule; for a train 511 is
+/// tracking, bold in the train's direction colour with 511's estimate, the printed time
+/// struck through under it when the two differ.
 private struct TimetableCell: View {
     let scheduled: String?
     let expected: Date?
     let isLive: Bool
     let isCurrent: Bool
+    let northbound: Bool
 
     var body: some View {
         let estimate = expected.map(RideFormat.clock)
@@ -901,7 +924,7 @@ private struct TimetableCell: View {
             Text(estimate ?? scheduled ?? "—")
                 .font(.system(size: 17, weight: isCurrent || isLive ? .semibold : .regular, design: .rounded))
                 .foregroundStyle(scheduled == nil ? AnyShapeStyle(.tertiary)
-                                 : isLive ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
+                                 : isLive ? AnyShapeStyle(Color.direction(northbound: northbound)) : AnyShapeStyle(.primary))
             if let estimate, let scheduled, estimate != scheduled {
                 Text(scheduled)
                     .font(.system(size: 11, design: .rounded))
@@ -1103,7 +1126,8 @@ private struct TimetableSheet: View {
                                 .monospacedDigit()
                                 .strikethrough(cancelled)
                         }
-                        .foregroundStyle(liveTrain != nil ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.secondary))
+                        .foregroundStyle(liveTrain != nil ? AnyShapeStyle(Color.direction(northbound: direction.isNorth))
+                                         : AnyShapeStyle(.secondary))
                     }
                     .frame(width: trainWidth)
                     .opacity(isGone(train, live: liveTrain) || cancelled ? departedOpacity : 1)
@@ -1164,7 +1188,8 @@ private struct TimetableSheet: View {
                             TimetableCell(scheduled: train.times[station],
                                           expected: expected,
                                           isLive: liveTrain != nil,
-                                          isCurrent: isCurrent)
+                                          isCurrent: isCurrent,
+                                          northbound: direction.isNorth)
                                 .opacity(gone ? departedOpacity : 1)
                                 .frame(width: trainWidth, height: rowHeight)
                                 .background(rowBackground(isCurrent: isCurrent, index: index))

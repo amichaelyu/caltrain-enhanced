@@ -75,6 +75,8 @@ struct TrainSheet: View {
         }
     }
 
+    private var tint: Color { .direction(northbound: train.northbound) }
+
     private var isRiding: Bool {
         ride.trainNumber == train.trainNumber && ride.northbound == train.northbound
     }
@@ -146,10 +148,10 @@ struct TrainSheet: View {
                     .opacity(0.85)
             }
             .font(.headline)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.onDirection(northbound: train.northbound))
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.caltrainRed))
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(tint))
         }
         .buttonStyle(.plain)
         .accessibilityHint("Follows this train to \(destination). Tap a stop below to get off somewhere else.")
@@ -207,7 +209,7 @@ struct TrainSheet: View {
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
-            .tint(Color.caltrainRed)
+            .tint(tint)
         }
     }
 
@@ -276,8 +278,8 @@ struct TrainSheet: View {
         let moved = projected != scheduled
         return HStack(spacing: 10) {
             Circle()
-                .fill(isBehind ? Color.caltrainRed.opacity(0.4)
-                      : isDestination ? Color.caltrainRed : Color(.systemBackground))
+                .fill(isBehind ? tint.opacity(0.4)
+                      : isDestination ? tint : Color(.systemBackground))
                 .frame(width: 10, height: 10)
                 .overlay(Circle().strokeBorder(isBehind || isDestination ? .clear : Color.primary.opacity(0.35),
                                                lineWidth: 2))
@@ -290,7 +292,7 @@ struct TrainSheet: View {
                 if isDestination || isBoarding {
                     Text(isDestination ? "Your stop" : "Boarding")
                         .font(.caption2.weight(.semibold))
-                        .foregroundStyle(Color.caltrainRed)
+                        .foregroundStyle(tint)
                 }
             }
 
@@ -300,7 +302,7 @@ struct TrainSheet: View {
                 Text(projected)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
                     .foregroundStyle(isBehind ? AnyShapeStyle(.tertiary)
-                                     : estimate.isLive ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
+                                     : estimate.isLive ? AnyShapeStyle(tint) : AnyShapeStyle(.primary))
                 if moved {
                     Text(scheduled)
                         .font(.system(size: 11, design: .rounded))

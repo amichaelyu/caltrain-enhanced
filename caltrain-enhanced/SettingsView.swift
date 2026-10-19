@@ -37,10 +37,13 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    keyRow(description: "Live estimate from 511.org for a train it's tracking.") {
-                        sampleTime("7:42", style: Color.caltrainRed, bold: true)
+                    keyRow(description: "Northbound train. Red on the board, the timetable and the map.") {
+                        sampleTime("7:42", style: Color.direction(northbound: true), bold: true, live: true)
                     }
-                    keyRow(description: "Printed timetable, no live data for this train.") {
+                    keyRow(description: "Southbound train. Black, or white in dark mode.") {
+                        sampleTime("7:42", style: Color.direction(northbound: false), bold: true, live: true)
+                    }
+                    keyRow(description: "The live icon: an estimate from 511.org. Without it, the printed timetable.") {
                         sampleTime("7:38", style: Color.primary)
                     }
                     keyRow(description: "Printed time, shown when the estimate differs from it.") {
@@ -105,13 +108,20 @@ struct SettingsView: View {
         .padding(.vertical, 3)
     }
 
-    private func sampleTime(_ time: String, style: Color, bold: Bool = false, struck: Bool = false) -> some View {
-        Text(time)
-            .font(.system(size: 16, weight: bold ? .semibold : .regular, design: .rounded))
-            .monospacedDigit()
-            .strikethrough(struck)
-            .foregroundStyle(style)
-            .accessibilityHidden(true)
+    private func sampleTime(_ time: String, style: Color, bold: Bool = false, struck: Bool = false,
+                            live: Bool = false) -> some View {
+        HStack(spacing: 3) {
+            if live {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            Text(time)
+                .font(.system(size: 16, weight: bold ? .semibold : .regular, design: .rounded))
+                .monospacedDigit()
+                .strikethrough(struck)
+        }
+        .foregroundStyle(style)
+        .accessibilityHidden(true)
     }
 
     /// Wide enough for the longest badge ("S. COUNTY") so none of them get clamped.

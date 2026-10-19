@@ -394,6 +394,8 @@ extension RideEstimate {
     /// stop, and it's when the train leaves; it pulls in about this much earlier.
     private static let dwell: TimeInterval = 45
 
+    private static let minimumPullIn: TimeInterval = 30
+
     /// When the train pulls into the stop after `index`: a dwell before its listed time,
     /// but never more than a third of a short leg, so the train still visibly moves.
     private func arrivalTime(atStopAfter index: Int) -> Date {
@@ -408,8 +410,12 @@ extension RideEstimate {
     /// projected time, and hold it at the platform until a newer fix says it has left.
     private func extrapolated(_ position: RidePosition, to now: Date) -> Double {
         let elapsed = now.timeIntervalSince(position.recordedAt)
-        let remaining = arrivalTime(atStopAfter: position.segmentIndex).timeIntervalSince(position.recordedAt)
-        guard elapsed > 0, remaining > 0 else { return position.fraction }
+        // A train running later than even 511's prediction would otherwise have no time
+        // left to cover the rest of the leg, and freeze short of the platform until the
+        // next fix. Give it at least this long to pull in.
+        let remaining = max(arrivalTime(atStopAfter: position.segmentIndex).timeIntervalSince(position.recordedAt),
+                            Self.minimumPullIn)
+        guard elapsed > 0 else { return position.fraction }
         return min(1, position.fraction + (1 - position.fraction) * elapsed / remaining)
     }
 }
