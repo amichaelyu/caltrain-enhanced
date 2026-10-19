@@ -216,10 +216,14 @@ struct TrainSheet: View {
     private func stops(estimate: RideEstimate, now: Date) -> some View {
         let origin = isRiding ? ride.originName : boarding(in: estimate)
         let originIndex = origin.flatMap { estimate.index(of: $0) }
+        // On a trip only what's still ahead of you matters; otherwise the whole run.
+        let shown = estimate.stops.enumerated().filter { index, stop in
+            !isRiding || (!isBehind(stop, now: now) && originIndex.map { index >= $0 } != false)
+        }
         return VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Stops")
+            SectionLabel(isRiding ? "Stops ahead" : "Stops")
             VStack(spacing: 0) {
-                ForEach(Array(estimate.stops.enumerated()), id: \.element.id) { index, stop in
+                ForEach(shown, id: \.element.id) { index, stop in
                     // Somewhere you could get off: after where you board, not behind the train.
                     let canAlight = !stop.hasPassed && originIndex.map { index > $0 } == true
                     Button {
@@ -230,12 +234,13 @@ struct TrainSheet: View {
                             onHopOn(origin, stop.station.name)
                         }
                     } label: {
-                        stopRow(stop, estimate: estimate, isBoarding: index == originIndex)
+                        stopRow(stop, estimate: estimate, isBoarding: index == originIndex,
+                                isBehind: isBehind(stop, now: now))
                     }
                     .buttonStyle(.plain)
                     .disabled(!canAlight)
                     .accessibilityHint(canAlight ? "Get off here" : "")
-                    if index < estimate.stops.count - 1 {
+                    if index != shown.last?.offset {
                         Rectangle()
                             .fill(Color.primary.opacity(0.06))
                             .frame(height: 0.5)
@@ -253,24 +258,33 @@ struct TrainSheet: View {
         }
     }
 
-    private func stopRow(_ stop: RideStopEstimate, estimate: RideEstimate, isBoarding: Bool) -> some View {
+    /// How long a stop stays in full colour after its time. The train may be standing
+    /// there or only just gone, and riders still glance back at it.
+    private static let behindAfter: TimeInterval = 5 * 60
+
+    /// Greyed out, and dropped from a trip's list, only once it's well behind.
+    private func isBehind(_ stop: RideStopEstimate, now: Date) -> Bool {
+        stop.hasPassed && now >= stop.projected.addingTimeInterval(Self.behindAfter)
+    }
+
+    private func stopRow(_ stop: RideStopEstimate, estimate: RideEstimate, isBoarding: Bool, isBehind: Bool) -> some View {
         let isDestination = isRiding && stop.station.name == ride.destinationName
         let projected = RideFormat.clock(stop.projected)
         let scheduled = RideFormat.clock(stop.scheduled)
         let moved = projected != scheduled
         return HStack(spacing: 10) {
             Circle()
-                .fill(stop.hasPassed ? Color.caltrainRed.opacity(0.4)
+                .fill(isBehind ? Color.caltrainRed.opacity(0.4)
                       : isDestination ? Color.caltrainRed : Color(.systemBackground))
                 .frame(width: 10, height: 10)
-                .overlay(Circle().strokeBorder(stop.hasPassed || isDestination ? .clear : Color.primary.opacity(0.35),
+                .overlay(Circle().strokeBorder(isBehind || isDestination ? .clear : Color.primary.opacity(0.35),
                                                lineWidth: 2))
                 .frame(width: 14)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(stop.station.name)
                     .font(.system(size: 16, weight: isDestination || isBoarding ? .semibold : .regular, design: .rounded))
-                    .foregroundStyle(stop.hasPassed ? .secondary : .primary)
+                    .foregroundStyle(isBehind ? .secondary : .primary)
                 if isDestination || isBoarding {
                     Text(isDestination ? "Your stop" : "Boarding")
                         .font(.caption2.weight(.semibold))
@@ -283,7 +297,7 @@ struct TrainSheet: View {
             VStack(alignment: .trailing, spacing: 1) {
                 Text(projected)
                     .font(.system(size: 15, weight: .semibold, design: .rounded))
-                    .foregroundStyle(stop.hasPassed ? AnyShapeStyle(.tertiary)
+                    .foregroundStyle(isBehind ? AnyShapeStyle(.tertiary)
                                      : estimate.isLive ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
                 if moved {
                     Text(scheduled)
