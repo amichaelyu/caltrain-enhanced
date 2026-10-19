@@ -392,6 +392,7 @@ private struct RideTimeline: View {
                 rail
             }
             rows
+            puckLayer
         }
         .padding(.vertical, 4)
         .cardBackground()
@@ -412,11 +413,22 @@ private struct RideTimeline: View {
             if let travelled = positionY {
                 segment(from: top, to: min(travelled, destinationY), color: Color.caltrainRed)
             }
-            if let travelled = positionY {
-                trainPuck.offset(y: travelled - 11)
-            }
         }
         .frame(width: railWidth, height: totalHeight, alignment: .top)
+    }
+
+    /// Its own layer above the rows, so a station dot never paints over the train.
+    @ViewBuilder
+    private var puckLayer: some View {
+        if let travelled = positionY {
+            HStack(spacing: 0) {
+                Color.clear.frame(width: timeWidth + timeGap, height: 1)
+                trainPuck
+                    .offset(y: travelled - 11)
+                    .frame(width: railWidth, height: totalHeight, alignment: .top)
+            }
+            .allowsHitTesting(false)
+        }
     }
 
     private func segment(from start: CGFloat, to end: CGFloat, color: Color) -> some View {
