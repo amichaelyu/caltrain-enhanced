@@ -172,7 +172,7 @@ struct TrainMapView: View {
         let style = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
 
         MapPolyline(coordinates: trip.coordinates)
-            .stroke(Color.caltrainRed.opacity(colorScheme == .dark ? 0.35 : 0.22), style: style)
+            .stroke(Color.caltrainRed.opacity(colorScheme == .dark ? 0.45 : 0.32), style: style)
 
         let ridden = trip.slice(from: 0, to: done)
         if ridden.count >= 2 {
@@ -182,7 +182,7 @@ struct TrainMapView: View {
         // Two pulses half a period apart, each a short comet that fades toward its tail.
         ForEach(pulses(done: done, remaining: remaining, length: pulseLength, at: date), id: \.id) { piece in
             MapPolyline(coordinates: trip.slice(from: piece.from, to: piece.to))
-                .stroke(pulseColor.opacity(piece.strength * (colorScheme == .dark ? 0.22 : 0.14)), style: style)
+                .stroke(pulseColor.opacity(piece.strength * (colorScheme == .dark ? 0.3 : 0.22)), style: style)
         }
     }
 
