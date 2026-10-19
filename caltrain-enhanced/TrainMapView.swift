@@ -37,7 +37,7 @@ struct TrainMapView: View {
     private let ticker = Timer.publish(every: TrainMapView.tick, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: scenePhase != .active)) { context in
+        TimelineView(.animation(paused: scenePhase != .active)) { context in
             map(at: context.date)
         }
         .safeAreaInset(edge: .top) { summary(fixes) }
