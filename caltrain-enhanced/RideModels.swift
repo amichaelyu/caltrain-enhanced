@@ -435,7 +435,10 @@ enum RideFormat {
         guard !meridiem.isEmpty else {
             return (date.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute()), nil)
         }
-        return (date.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()), meridiem)
+        // Built by hand: asking Foundation for the hour without its AM/PM gives "09:07".
+        let parts = Calendar.current.dateComponents([.hour, .minute], from: date)
+        let hour = (parts.hour ?? 0) % 12
+        return (String(format: "%d:%02d", hour == 0 ? 12 : hour, parts.minute ?? 0), meridiem)
     }
 
     /// Yields "" wherever the locale's clock has no AM/PM to show.

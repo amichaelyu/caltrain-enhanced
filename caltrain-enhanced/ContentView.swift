@@ -713,7 +713,7 @@ private struct DepartureClock: View {
                     .foregroundStyle(tint)
                 if train.isOffSchedule {
                     // No AM/PM: the live time beside it already says which.
-                    Text(train.arrivalDate.formatted(.dateTime.hour(.defaultDigits(amPM: .omitted)).minute()))
+                    Text(RideFormat.clockParts(train.arrivalDate).time)
                         .font(.system(size: size * 0.8, design: .rounded))
                         .strikethrough()
                         .foregroundStyle(.tertiary)
