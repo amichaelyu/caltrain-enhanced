@@ -245,7 +245,7 @@ struct ContentView: View {
         // The sheet edits `direction` through a binding, so flipping the timetable also
         // flips the board behind it.
         .sheet(item: $selectedTrain) { train in
-            TrainSheet(train: train, boardingHint: location.activeStation?.name) { origin, destination in
+            TrainSheet(train: train) { origin, destination in
                 selectedTrain = nil
                 onStartRide(train, origin, destination)
             }

@@ -4,7 +4,8 @@
 //
 //  One train, start to finish: where it is, whether it's late, and every stop with its
 //  printed and live times. Opened from a train on the map or a departure on Plan. "Hop
-//  on" starts a trip to the end of the line; tapping a stop makes that your stop instead.
+//  on" puts you aboard where the train is now, riding to the end of the line; tapping a
+//  stop makes that your stop instead.
 //
 
 import SwiftUI
@@ -31,9 +32,6 @@ struct TrainRef: Identifiable, Hashable {
 
 struct TrainSheet: View {
     let train: TrainRef
-    /// The station you're at, if it's one this train still calls at: where "Hop on"
-    /// boards you. Otherwise you board at the train's next stop.
-    let boardingHint: String?
     /// Starts a trip on this train: boarding station, then the stop you get off at.
     let onHopOn: (String, String) -> Void
 
@@ -124,15 +122,14 @@ struct TrainSheet: View {
 
     // MARK: Trip
 
-    /// Where "Hop on" boards you: your station if the train still calls there before
-    /// the end of the line, otherwise the stop it's coming up to — you're on it already.
+    /// Where "Hop on" boards you. Hopping on means you're aboard already, so it's the
+    /// stop the train last left — or its origin, if it hasn't set off. Nil once there's
+    /// nowhere left to ride to.
     private func boarding(in estimate: RideEstimate) -> String? {
-        let ahead = Array(estimate.stops.filter { !$0.hasPassed }.dropLast())
-        if let hint = boardingHint,
-           ahead.contains(where: { $0.station.name.caseInsensitiveCompare(hint) == .orderedSame }) {
-            return hint
-        }
-        return ahead.first?.station.name
+        let stops = estimate.stops
+        let behind = stops.lastIndex(where: \.hasPassed) ?? 0
+        guard behind < stops.count - 1 else { return nil }
+        return stops[behind].station.name
     }
 
     private func hopOnButton(origin: String, destination: String) -> some View {

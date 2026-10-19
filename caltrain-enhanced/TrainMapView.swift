@@ -70,7 +70,7 @@ struct TrainMapView: View {
         // Drag it up for every stop; the map stays live behind it at the smaller sizes.
         .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
             if let train = selectedID.flatMap(TrainRef.init(id:)) {
-                TrainSheet(train: train, boardingHint: location.activeStation?.name) { origin, destination in
+                TrainSheet(train: train) { origin, destination in
                     ride.start(trainNumber: train.trainNumber, from: origin,
                                northbound: train.northbound, destinationName: destination)
                 }
@@ -205,11 +205,14 @@ struct TrainMapView: View {
             }
         }
 
-        if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }),
-           let path = path(approach.slice(from: approach.distance(of: drawnCoordinate(fix, at: date)),
-                                          to: approach.length), proxy: proxy) {
-            graphics.stroke(path, with: .color(rideTint.opacity(colorScheme == .dark ? 0.6 : 0.5)),
-                            style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
+        if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }) {
+            let from = approach.distance(of: drawnCoordinate(fix, at: date))
+            // Gone only once the drawn train is at the platform, give or take a carriage.
+            if approach.length - from > 30,
+               let path = path(approach.slice(from: from, to: approach.length), proxy: proxy) {
+                graphics.stroke(path, with: .color(rideTint.opacity(colorScheme == .dark ? 0.6 : 0.5)),
+                                style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
+            }
         }
     }
 
@@ -330,12 +333,13 @@ struct TrainMapView: View {
     }
 
     /// The trip's train's stretch from the stop behind it to your boarding stop. Nil once
-    /// it's there, or off a trip.
+    /// it's left there, or off a trip. Whether the line is actually drawn depends on where
+    /// the train is *drawn*, not where the estimate puts it: the puck eases toward a fresh
+    /// fix at train speed, so it can still be pulling in after the estimate says it's there.
     private func makeApproach() -> RideRoute? {
         guard let rideID, let fix = fixes.first(where: { $0.id == rideID }),
               let origin = ride.originName, let boardIndex = fix.run.index(of: origin),
-              fix.placement.segmentIndex < boardIndex,
-              !(fix.placement.segmentIndex == boardIndex - 1 && fix.placement.fraction >= 1)
+              fix.placement.segmentIndex < boardIndex
         else { return nil }
         return RideRoute(stations: fix.run.stops[fix.placement.segmentIndex...boardIndex].map(\.station))
     }
