@@ -192,8 +192,6 @@ struct ContentView: View {
                     ZStack {
                         DepartureBoard(direction: direction,
                                        trains: direction.isNorth ? northbound : southbound,
-                                       nextFix: nextFix,
-                                       stationName: station.name,
                                        onToggle: flipDirection,
                                        onOpenTimetable: { showTimetable = true },
                                        onChooseDestination: chooseDestination)
@@ -480,18 +478,6 @@ struct ContentView: View {
         return Array(departures.sorted { $0.departureDate < $1.departureDate }.prefix(8))
     }
 
-    /// Where the next train on the board is right now, if it's out on the line.
-    private var nextFix: TrainFix? {
-        guard let train = (direction.isNorth ? northbound : southbound).first,
-              let run = CaltrainService.shared.run(trainNumber: train.trainNumber,
-                                                   northbound: direction.isNorth,
-                                                   at: now)
-        else { return nil }
-        return TrainFix(run: run,
-                        live: live.train(train.trainNumber, northbound: direction.isNorth, at: now),
-                        now: now)
-    }
-
     /// Only poll while the board is on screen.
     private func updateLiveFeed() {
         if scenePhase == .active && isVisible {
@@ -526,8 +512,6 @@ struct ContentView: View {
 private struct DepartureBoard: View {
     let direction: TimetableDirection
     let trains: [NextTrainInfo]
-    let nextFix: TrainFix?
-    let stationName: String
     let onToggle: () -> Void
     let onOpenTimetable: () -> Void
     let onChooseDestination: (String) -> Void
@@ -541,7 +525,7 @@ private struct DepartureBoard: View {
             directionToggle
 
             Button { if let next { onChooseDestination(next.trainNumber) } } label: {
-                DepartureRow(direction: direction, train: next, fix: nextFix, stationName: stationName)
+                DepartureRow(direction: direction, train: next)
             }
             .buttonStyle(.plain)
             .disabled(next == nil)
@@ -716,8 +700,6 @@ private struct DepartureClock: View {
 private struct DepartureRow: View {
     let direction: TimetableDirection
     let train: NextTrainInfo?
-    let fix: TrainFix?
-    let stationName: String
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -733,7 +715,6 @@ private struct DepartureRow: View {
                             .foregroundStyle(.secondary)
                         TrainTypeBadge(trainClass: TrainClass(train.trainType))
                     }
-                    whereabouts
                 } else {
                     Text("No more trains today")
                         .font(.footnote)
@@ -748,23 +729,6 @@ private struct DepartureRow: View {
         .padding(.horizontal, 20)
         .padding(.top, 4)
         .padding(.bottom, 18)
-    }
-
-    /// Where the train is now: "Between Hillsdale and Belmont · 3 stops away". Nothing
-    /// before it's left its origin, or once it's here.
-    @ViewBuilder private var whereabouts: some View {
-        if let fix, let away = fix.stopsAway(from: stationName) {
-            HStack(spacing: 4) {
-                Image(systemName: fix.isLive ? "dot.radiowaves.left.and.right" : "clock")
-                    .font(.system(size: 9, weight: .bold))
-                Text("\(fix.whereabouts) · \(away == 1 ? "next stop" : "\(away) stops away")")
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-            }
-            .font(.caption)
-            .foregroundStyle(fix.isLive ? Color.caltrainRed : .secondary)
-            .accessibilityLabel("\(fix.whereabouts), \(away == 1 ? "next stop is this one" : "\(away) stops away"), \(fix.isLive ? "live from 511.org" : "from the timetable")")
-        }
     }
 
     @ViewBuilder private var countdown: some View {
