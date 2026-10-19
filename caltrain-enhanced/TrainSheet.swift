@@ -238,7 +238,9 @@ struct TrainSheet: View {
                                 isBehind: isBehind(stop, now: now))
                     }
                     .buttonStyle(.plain)
-                    .disabled(!canAlight)
+                    // Ignoring taps rather than `.disabled`, which would dim the row: the
+                    // boarding stop isn't somewhere to get off, but it isn't behind you either.
+                    .allowsHitTesting(canAlight)
                     .accessibilityHint(canAlight ? "Get off here" : "")
                     if index != shown.last?.offset {
                         Rectangle()
