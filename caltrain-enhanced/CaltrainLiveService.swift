@@ -30,6 +30,9 @@ struct LiveTrain: Decodable {
     let latitude: Double?
     let longitude: Double?
     let stops: [LiveStop]
+    /// When this position was current. The feed has no per-train time, so it's stamped
+    /// with when 511 produced the snapshot.
+    var recordedAt: Date?
 
     var northbound: Bool { direction == "N" }
 
@@ -98,7 +101,10 @@ final class CaltrainLiveService: ObservableObject {
     /// The live run for a timetable train, if it's in service and the data is fresh.
     func train(_ number: String, northbound: Bool, at now: Date = Date()) -> LiveTrain? {
         guard let feed, now.timeIntervalSince(feed.fetched) < Self.maxAge else { return nil }
-        return feed.trains.first { $0.train == number && $0.northbound == northbound }
+        guard var train = feed.trains.first(where: { $0.train == number && $0.northbound == northbound })
+        else { return nil }
+        train.recordedAt = feed.updated
+        return train
     }
 
     private func refresh() async {

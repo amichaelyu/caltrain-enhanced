@@ -64,6 +64,9 @@ struct RidePosition {
     let metersFromLine: CLLocationDistance
     /// Whose fix this is: the rider's phone (`.location`) or the train's own (`.feed`).
     let source: RideSource
+    /// When the fix was taken. The train has moved on since, and `placement(at:)` carries
+    /// it forward from here.
+    let recordedAt: Date
 }
 
 struct RideStopEstimate: Identifiable {
@@ -192,7 +195,10 @@ enum RideEstimator {
         // wandering fix and the clock places it instead.
         var position: RidePosition?
         if next > 0 {
-            let train = live.coordinate.map { CLLocation(latitude: $0.latitude, longitude: $0.longitude) }
+            let train = live.coordinate.map {
+                CLLocation(coordinate: $0, altitude: 0, horizontalAccuracy: 0, verticalAccuracy: -1,
+                           timestamp: live.recordedAt ?? now)
+            }
             let rider = userLocation.flatMap { fix in
                 // The rider's phone is fresher than the feed, but only says anything about
                 // the train if they're actually on it.
@@ -268,7 +274,8 @@ enum RideEstimator {
                 best = RidePosition(segmentIndex: index,
                                     fraction: projection.fraction,
                                     metersFromLine: projection.meters,
-                                    source: source)
+                                    source: source,
+                                    recordedAt: location.timestamp)
             }
         }
 
@@ -356,7 +363,7 @@ extension RideEstimate {
         // timetable can't.
         if let position, position.segmentIndex + 1 < stops.count {
             return RidePlacement(segmentIndex: position.segmentIndex,
-                                 fraction: position.fraction,
+                                 fraction: extrapolated(position, to: now),
                                  source: position.source)
         }
 
@@ -376,6 +383,16 @@ extension RideEstimate {
 
         // Past the last stop on the run.
         return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, source: clockSource)
+    }
+
+    /// A fix says where the train was when it was taken, and 511's can be a minute or two
+    /// old. Carry it on toward the next stop at the pace that gets it there at its
+    /// projected time, and hold it at the platform until a newer fix says it has left.
+    private func extrapolated(_ position: RidePosition, to now: Date) -> Double {
+        let elapsed = now.timeIntervalSince(position.recordedAt)
+        let remaining = stops[position.segmentIndex + 1].projected.timeIntervalSince(position.recordedAt)
+        guard elapsed > 0, remaining > 0 else { return position.fraction }
+        return min(1, position.fraction + (1 - position.fraction) * elapsed / remaining)
     }
 }
 

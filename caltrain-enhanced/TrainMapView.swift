@@ -52,7 +52,9 @@ struct TrainMapView: View {
             UserAnnotation()
 
             ForEach(fixes) { fix in
-                Annotation("#\(fix.run.trainNumber)", coordinate: fix.coordinate, anchor: .center) {
+                // Anchored by its foot, so the number floats above the line instead of
+                // sitting on a station's dot.
+                Annotation("#\(fix.run.trainNumber)", coordinate: fix.coordinate, anchor: .bottom) {
                     MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
                 }
                 .annotationTitles(.hidden)
@@ -134,6 +136,19 @@ private struct MapTrainPuck: View {
 
     var body: some View {
         let color = fix.isLive ? Color.caltrainRed : Color.gray
+        VStack(spacing: 0) {
+            label(color)
+            // Stem down to where the train actually is.
+            Rectangle().fill(color).frame(width: 2, height: 6)
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+                .overlay(Circle().strokeBorder(.white, lineWidth: 1.5))
+        }
+        .shadow(radius: 2, y: 1)
+    }
+
+    private func label(_ color: Color) -> some View {
         HStack(spacing: 2) {
             Image(systemName: fix.run.northbound ? "arrow.up" : "arrow.down")
                 .font(.system(size: 8, weight: .black))
@@ -146,8 +161,7 @@ private struct MapTrainPuck: View {
         .padding(.vertical, 3)
         .background(Capsule().fill(color))
         .overlay(Capsule().strokeBorder(.white, lineWidth: isSelected ? 2.5 : 1.5))
-        .scaleEffect(isSelected ? 1.25 : 1)
-        .shadow(radius: 2, y: 1)
+        .scaleEffect(isSelected ? 1.25 : 1, anchor: .bottom)
     }
 }
 

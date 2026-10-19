@@ -542,25 +542,28 @@ private struct RideTimeline: View {
         let parts = RideFormat.clockParts(stop.projected)
         let scheduled = RideFormat.clockParts(stop.scheduled)
         let moved = scheduled.time != parts.time || scheduled.meridiem != parts.meridiem
-        return VStack(alignment: .trailing, spacing: 1) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(parts.time)
-                    .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
-                    .monospacedDigit()
-                if let meridiem = parts.meridiem {
-                    Text(meridiem)
-                        .font(.system(size: 9, weight: .semibold, design: .rounded))
-                }
+        return HStack(alignment: .firstTextBaseline, spacing: 2) {
+            Text(parts.time)
+                .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
+                .monospacedDigit()
+            if let meridiem = parts.meridiem {
+                Text(meridiem)
+                    .font(.system(size: 9, weight: .semibold, design: .rounded))
             }
-            .foregroundStyle(stop.hasPassed ? AnyShapeStyle(.tertiary)
-                             : moved ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
-
+        }
+        .foregroundStyle(stop.hasPassed ? AnyShapeStyle(.tertiary)
+                         : moved ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
+        // Hung below without taking up layout, so the live time stays level with the
+        // station name and the dot.
+        .overlay(alignment: .bottomTrailing) {
             if moved {
                 Text(scheduled.time)
                     .font(.system(size: 11, design: .rounded))
                     .monospacedDigit()
                     .strikethrough()
                     .foregroundStyle(.tertiary)
+                    .fixedSize()
+                    .offset(y: 14)
             }
         }
         .lineLimit(1)
