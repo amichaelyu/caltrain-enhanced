@@ -20,6 +20,9 @@ struct RideMap: View {
     let onSelect: (String) -> Void
 
     @State private var camera: MapCameraPosition = .automatic
+    /// The camera as the rider last left it, so following re-centres without undoing
+    /// their zoom.
+    @State private var lastCamera: MapCamera?
     /// Follow the train, or hold still on the whole run.
     @State private var followsTrain = true
 
@@ -64,7 +67,12 @@ struct RideMap: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(alignment: .topTrailing) { followButton }
         .overlay(alignment: .bottomLeading) { sourceBadge }
-        .onChange(of: cameraKey, initial: true) { _, _ in frame() }
+        .onMapCameraChange(frequency: .onEnd) { context in lastCamera = context.camera }
+        .onChange(of: cameraKey, initial: true) { old, new in
+            // Mode switches get an eased move; following a moving train inherits the
+            // tick's linear animation so the camera glides with it.
+            frame(eased: old.split(separator: "|").first != new.split(separator: "|").first || lastCamera == nil)
+        }
         .accessibilityLabel("Map of the run, train placed \(sourceLabel.lowercased())")
     }
 
@@ -120,26 +128,39 @@ struct RideMap: View {
 
     // MARK: Camera
 
-    /// Recentre when the train has actually moved, not on every tick.
+    /// Recentre when the train has actually moved, not on every tick. The whole-run view
+    /// only reframes when the run itself changes, so it leaves the rider's zoom alone.
     private var cameraKey: String {
         let mode = followsTrain ? "follow" : "run"
+        guard followsTrain else { return "\(mode)|\(destinationName ?? "-")" }
         guard let coordinate = trainCoordinate else { return "\(mode)|-" }
         return String(format: "%@|%.4f,%.4f|%@", mode, coordinate.latitude, coordinate.longitude,
                       destinationName ?? "-")
     }
 
-    private func frame() {
+    private func frame(eased: Bool) {
         let target: MapCameraPosition
         if followsTrain, let coordinate = trainCoordinate {
-            target = .region(MKCoordinateRegion(center: coordinate,
-                                                latitudinalMeters: 5_000,
-                                                longitudinalMeters: 5_000))
+            if let lastCamera {
+                target = .camera(MapCamera(centerCoordinate: coordinate,
+                                           distance: lastCamera.distance,
+                                           heading: lastCamera.heading,
+                                           pitch: lastCamera.pitch))
+            } else {
+                target = .region(MKCoordinateRegion(center: coordinate,
+                                                    latitudinalMeters: 5_000,
+                                                    longitudinalMeters: 5_000))
+            }
         } else {
             let shown = destinationIndex.map { Array(stops.prefix($0 + 1)) } ?? stops
             guard let rect = boundingRect(track(through: shown)) else { return }
             target = .rect(rect.insetBy(dx: -rect.size.width * 0.2, dy: -rect.size.height * 0.2))
         }
-        withAnimation(.easeInOut(duration: 0.4)) { camera = target }
+        if eased {
+            withAnimation(.easeInOut(duration: 0.4)) { camera = target }
+        } else {
+            camera = target
+        }
     }
 
     private func boundingRect(_ coordinates: [CLLocationCoordinate2D]) -> MKMapRect? {

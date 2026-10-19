@@ -19,8 +19,9 @@ struct TrainMapView: View {
     @State private var selectedID: String?
     @State private var camera: MapCameraPosition = .rect(TrainMapView.corridorRect)
 
-    /// Fast enough that a timetable-placed train visibly creeps along between feed polls.
-    private let ticker = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
+    /// Once a second, each step animated linearly into the next, so the trains glide
+    /// rather than hop.
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var fixes: [TrainFix] {
         CaltrainService.shared.runs(at: now).compactMap { run in
@@ -78,7 +79,7 @@ struct TrainMapView: View {
         .animation(.easeInOut(duration: 0.2), value: selectedID)
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
-            now = date
+            withAnimation(.linear(duration: 1)) { now = date }
         }
         .onChange(of: scenePhase, initial: true) { _, _ in
             now = Date()

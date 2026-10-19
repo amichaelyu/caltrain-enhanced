@@ -26,7 +26,9 @@ struct RideView: View {
     @State private var showTrainPicker = false
     @State private var showDestinationPicker = false
 
-    private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
+    /// Once a second, animated linearly between ticks, so the train glides along the map
+    /// and the timeline instead of jumping.
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var itinerary: RideItinerary? {
         guard let trainNumber = ride.trainNumber, let origin = ride.originName else { return nil }
@@ -119,7 +121,7 @@ struct RideView: View {
         .onChange(of: ride.isActive) { _, _ in updateLiveFeed() }
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
-            now = date
+            withAnimation(.linear(duration: 1)) { now = date }
         }
     }
 
