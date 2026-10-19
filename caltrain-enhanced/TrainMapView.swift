@@ -14,29 +14,51 @@ struct TrainMapView: View {
     @ObservedObject private var live = CaltrainLiveService.shared
     @Environment(\.scenePhase) private var scenePhase
 
-    @State private var now = Date()
     @State private var isVisible = false
     @State private var selectedID: String?
     @State private var camera: MapCameraPosition = .rect(TrainMapView.corridorRect)
 
-    /// Once a second, each step animated linearly into the next, so the trains glide
-    /// rather than hop.
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    /// Where every train is as of the last tick.
+    @State private var fixes: [TrainFix] = []
+    /// Where each train was drawn when that tick landed: the start of its glide.
+    @State private var glideStart: [String: CLLocationCoordinate2D] = [:]
+    @State private var tickDate = Date()
 
-    private var fixes: [TrainFix] {
-        CaltrainService.shared.runs(at: now).compactMap { run in
-            guard !live.isCancelled(run.trainNumber, at: now) else { return nil }
-            return TrainFix(run: run,
-                     live: live.train(run.trainNumber, northbound: run.northbound, at: now),
-                     now: now)
-        }
-        .filter { !$0.hasFinished(at: now) }
-    }
+    /// Positions are worked out once a second; the map redraws every frame in between,
+    /// sliding each train from where it was drawn to where it now is. MapKit won't
+    /// animate an annotation's coordinate on its own, so this is what makes it glide.
+    private static let tick: TimeInterval = 1
+    private let ticker = Timer.publish(every: TrainMapView.tick, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        let fixes = fixes
         let selected = fixes.first { $0.id == selectedID }
 
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: scenePhase != .active)) { context in
+            map(at: context.date)
+        }
+        .safeAreaInset(edge: .top) { summary(fixes) }
+        .safeAreaInset(edge: .bottom) {
+            if let selected {
+                TrainDetailCard(fix: selected) { selectedID = nil }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 8)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.2), value: selectedID)
+        .onReceive(ticker) { date in
+            guard scenePhase == .active else { return }
+            advance(to: date)
+        }
+        .onChange(of: scenePhase, initial: true) { _, _ in
+            advance(to: Date(), glide: false)
+            updateLiveFeed()
+        }
+        .onAppear { isVisible = true; advance(to: Date(), glide: false); updateLiveFeed() }
+        .onDisappear { isVisible = false; updateLiveFeed() }
+    }
+
+    private func map(at date: Date) -> some View {
         Map(position: $camera, selection: $selectedID) {
             MapPolyline(coordinates: CaltrainCorridor.path)
                 .stroke(Color.primary.opacity(0.22),
@@ -56,7 +78,7 @@ struct TrainMapView: View {
             ForEach(fixes) { fix in
                 // Anchored by its foot, so the number floats above the line instead of
                 // sitting on a station's dot.
-                Annotation("#\(fix.run.trainNumber)", coordinate: fix.coordinate, anchor: .bottom) {
+                Annotation("#\(fix.run.trainNumber)", coordinate: drawnCoordinate(fix, at: date), anchor: .bottom) {
                     MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
                 }
                 .annotationTitles(.hidden)
@@ -68,26 +90,34 @@ struct TrainMapView: View {
             MapUserLocationButton()
             MapCompass()
         }
-        .safeAreaInset(edge: .top) { summary(fixes) }
-        .safeAreaInset(edge: .bottom) {
-            if let selected {
-                TrainDetailCard(fix: selected) { selectedID = nil }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 8)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
+    }
+
+    // MARK: Motion
+
+    private func currentFixes(at date: Date) -> [TrainFix] {
+        CaltrainService.shared.runs(at: date).compactMap { run in
+            guard !live.isCancelled(run.trainNumber, at: date) else { return nil }
+            return TrainFix(run: run,
+                            live: live.train(run.trainNumber, northbound: run.northbound, at: date),
+                            now: date)
         }
-        .animation(.easeInOut(duration: 0.2), value: selectedID)
-        .onReceive(ticker) { date in
-            guard scenePhase == .active else { return }
-            withAnimation(.linear(duration: 1)) { now = date }
-        }
-        .onChange(of: scenePhase, initial: true) { _, _ in
-            now = Date()
-            updateLiveFeed()
-        }
-        .onAppear { isVisible = true; now = Date(); updateLiveFeed() }
-        .onDisappear { isVisible = false; updateLiveFeed() }
+        .filter { !$0.hasFinished(at: date) }
+    }
+
+    /// Starts each glide from wherever the train is drawn right now, so a late tick or a
+    /// fresh 511 fix bends its path instead of making it jump.
+    private func advance(to date: Date, glide: Bool = true) {
+        glideStart = glide
+            ? Dictionary(fixes.map { ($0.id, drawnCoordinate($0, at: date)) }, uniquingKeysWith: { a, _ in a })
+            : [:]
+        fixes = currentFixes(at: date)
+        tickDate = date
+    }
+
+    private func drawnCoordinate(_ fix: TrainFix, at date: Date) -> CLLocationCoordinate2D {
+        guard let start = glideStart[fix.id] else { return fix.coordinate }
+        let t = min(max(date.timeIntervalSince(tickDate) / Self.tick, 0), 1)
+        return CaltrainCorridor.interpolate(start, fix.coordinate, t)
     }
 
     /// Count of trains out, and how many of them 511 is actually tracking. 511's

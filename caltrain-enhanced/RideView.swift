@@ -26,6 +26,10 @@ struct RideView: View {
     @State private var smoother = PlacementSmoother()
     /// Where the train is drawn, eased each tick by `smoother`; keyed by `rideKey`.
     @State private var placement: RidePlacement?
+    /// Where the train was drawn when `placement` landed, and when that was: the map
+    /// slides between the two every frame.
+    @State private var previousPlacement: RidePlacement?
+    @State private var placementDate = Date()
     @State private var placementKey: String?
     @State private var showTrainPicker = false
     @State private var showDestinationPicker = false
@@ -56,11 +60,19 @@ struct RideView: View {
 
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel("On the line")
-                            RideMap(estimate: estimate,
-                                    placement: placement,
-                                    destinationName: ride.destinationName,
-                                    now: now,
-                                    onSelect: setDestination)
+                            let motion = PlacementMotion(from: placementKey == rideKey ? previousPlacement : nil,
+                                                         to: placement,
+                                                         start: placementDate,
+                                                         duration: 1)
+                            // MapKit won't animate an annotation's coordinate, so the map
+                            // is redrawn every frame with the train slid along the line.
+                            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: scenePhase != .active)) { context in
+                                RideMap(estimate: estimate,
+                                        placement: motion.placement(at: context.date),
+                                        destinationName: ride.destinationName,
+                                        now: now,
+                                        onSelect: setDestination)
+                            }
                         }
 
                         VStack(alignment: .leading, spacing: 10) {
@@ -151,7 +163,13 @@ struct RideView: View {
             return
         }
         let estimate = estimate(for: itinerary, at: date)
+        // Glide on from wherever the train is drawn now, so a late tick never jumps it.
+        previousPlacement = placementKey == key
+            ? PlacementMotion(from: previousPlacement, to: placement, start: placementDate, duration: 1)
+                .placement(at: date)
+            : nil
         placement = smoother.update(estimate.placement(at: date), key: key, stopCount: estimate.stops.count)
+        placementDate = date
         placementKey = key
     }
 

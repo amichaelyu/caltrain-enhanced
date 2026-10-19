@@ -463,6 +463,28 @@ struct PlacementSmoother {
     }
 }
 
+/// Two placements a tick apart, so a view redrawn every frame can slide the train from
+/// one to the other instead of hopping once a tick.
+struct PlacementMotion {
+    let from: RidePlacement?
+    let to: RidePlacement?
+    let start: Date
+    let duration: TimeInterval
+
+    func placement(at date: Date) -> RidePlacement? {
+        guard let to else { return nil }
+        guard let from else { return to }
+        let a = Double(from.segmentIndex) + from.fraction
+        let b = Double(to.segmentIndex) + to.fraction
+        let t = min(max(date.timeIntervalSince(start) / duration, 0), 1)
+        let value = a + (b - a) * t
+        let segment = min(Int(value.rounded(.down)), max(from.segmentIndex, to.segmentIndex))
+        return RidePlacement(segmentIndex: segment,
+                             fraction: min(max(value - Double(segment), 0), 1),
+                             source: to.source)
+    }
+}
+
 /// The ride the app is currently following: which train, where it was boarded, and where
 /// the rider is getting off. Lives above the tabs so picking a train on Plan is the same
 /// act as starting a ride.

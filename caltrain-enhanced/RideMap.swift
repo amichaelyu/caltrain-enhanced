@@ -129,13 +129,14 @@ struct RideMap: View {
 
     // MARK: Camera
 
-    /// Recentre when the train has actually moved, not on every tick. The whole-run view
-    /// only reframes when the run itself changes, so it leaves the rider's zoom alone.
+    /// Recentre whenever the drawn train moves a metre or so, which while it glides is
+    /// most frames, so the camera rides along with it. The whole-run view only reframes
+    /// when the run itself changes, so it leaves the rider's zoom alone.
     private var cameraKey: String {
         let mode = followsTrain ? "follow" : "run"
         guard followsTrain else { return "\(mode)|\(destinationName ?? "-")" }
         guard let coordinate = trainCoordinate else { return "\(mode)|-" }
-        return String(format: "%@|%.4f,%.4f|%@", mode, coordinate.latitude, coordinate.longitude,
+        return String(format: "%@|%.5f,%.5f|%@", mode, coordinate.latitude, coordinate.longitude,
                       destinationName ?? "-")
     }
 
