@@ -59,6 +59,7 @@ struct TrainMapView: View {
                         .overlay {
                             Canvas { graphics, _ in
                                 drawTrip(in: &graphics, proxy: proxy, at: context.date)
+                                drawUser(in: &graphics, proxy: proxy)
                             }
                             .allowsHitTesting(false)
                         }
@@ -130,7 +131,7 @@ struct TrainMapView: View {
             }
 
             // No `UserAnnotation()`: MapKit paints it under the trip, where the line
-            // crossed it out. The dot is drawn over the trip in `pucks` instead.
+            // crossed it out. The dot is drawn over the trip in `drawUser` instead.
             ForEach(shownFixes) { fix in
                 // Anchored by its foot, so the number floats above the line instead of
                 // sitting on a station's dot.
@@ -165,14 +166,10 @@ struct TrainMapView: View {
     /// over the map, which put the trip's pulses across the pucks; so the annotations
     /// are left blank for tapping, and the pucks are drawn here, above the trip, at the
     /// same screen points. The selected one goes on last so it sits over the others.
+    /// Nothing else goes in here: a positioned view beside the pucks sent SwiftUI and
+    /// MapKit into an endless relayout the moment a train was selected, hanging the app.
     private func pucks(proxy: MapProxy, at date: Date) -> some View {
         ZStack {
-            // You, under the trains: the trip's line hid MapKit's own dot.
-            if let coordinate = location.coordinate,
-               let point = proxy.convert(coordinate, to: .local) {
-                MapUserDot()
-                    .position(point)
-            }
             ForEach(shownFixes.sorted { ($0.id == selectedID ? 1 : 0) < ($1.id == selectedID ? 1 : 0) }) { fix in
                 if let point = proxy.convert(drawnCoordinate(fix, at: date), to: .local) {
                     MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
@@ -276,6 +273,20 @@ struct TrainMapView: View {
                                 style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
             }
         }
+    }
+
+    /// You: the stock "you are here" dot, drawn by hand so it sits over the trip and
+    /// under the trains. In the Canvas, not a view: see `pucks`.
+    private func drawUser(in graphics: inout GraphicsContext, proxy: MapProxy) {
+        guard let coordinate = location.coordinate,
+              let point = proxy.convert(coordinate, to: .local) else { return }
+        let outer = Path(ellipseIn: CGRect(x: point.x - 8, y: point.y - 8, width: 16, height: 16))
+        let inner = Path(ellipseIn: CGRect(x: point.x - 5, y: point.y - 5, width: 10, height: 10))
+        graphics.drawLayer { layer in
+            layer.addFilter(.shadow(color: .black.opacity(0.3), radius: 3, y: 1))
+            layer.fill(outer, with: .color(.white))
+        }
+        graphics.fill(inner, with: .color(Color(.systemBlue)))
     }
 
     /// A run of coordinates as a screen-space path; nil when there's nothing to draw.
@@ -494,18 +505,6 @@ private struct MapTrainPuck: View {
 }
 
 // MARK: - You
-
-/// The stock "you are here" dot, drawn by hand so it can sit over the trip.
-private struct MapUserDot: View {
-    var body: some View {
-        Circle()
-            .fill(Color(.systemBlue))
-            .frame(width: 16, height: 16)
-            .overlay(Circle().strokeBorder(.white, lineWidth: 3))
-            .shadow(color: .black.opacity(0.3), radius: 3, y: 1)
-            .accessibilityLabel("Your location")
-    }
-}
 
 /// Where you are, for the map alone. `SharedLocationManager` is tuned for naming the
 /// nearest station, so it asks for 100 m fixes and only republishes after a 75 m move;
