@@ -526,27 +526,45 @@ private struct RideTimeline: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("\(stop.station.name), \(RideFormat.clock(stop.projected))")
+        .accessibilityLabel(RideFormat.clock(stop.projected) == RideFormat.clock(stop.scheduled)
+                            ? "\(stop.station.name), \(RideFormat.clock(stop.projected))"
+                            : "\(stop.station.name), \(RideFormat.clock(stop.projected)), scheduled \(RideFormat.clock(stop.scheduled))")
         .accessibilityHint(isDestination ? "Your stop. Tap to clear" : "Tap to get off here")
     }
 
     /// Digits at full size with the AM/PM tucked in small beside them: at 14pt an
     /// "11:05 PM" wouldn't fit the column, and truncating a time is worse than shrinking
     /// the half of it you can infer.
+    ///
+    /// When the projection has moved off the timetable, the scheduled time sits struck
+    /// through underneath, so you can see what the live time is measured against.
     private func clock(_ stop: RideStopEstimate) -> some View {
         let parts = RideFormat.clockParts(stop.projected)
-        return HStack(alignment: .firstTextBaseline, spacing: 2) {
-            Text(parts.time)
-                .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
-                .monospacedDigit()
-            if let meridiem = parts.meridiem {
-                Text(meridiem)
-                    .font(.system(size: 9, weight: .semibold, design: .rounded))
+        let scheduled = RideFormat.clockParts(stop.scheduled)
+        let moved = scheduled.time != parts.time || scheduled.meridiem != parts.meridiem
+        return VStack(alignment: .trailing, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(parts.time)
+                    .font(.system(size: 14, weight: stop.hasPassed ? .regular : .semibold, design: .rounded))
+                    .monospacedDigit()
+                if let meridiem = parts.meridiem {
+                    Text(meridiem)
+                        .font(.system(size: 9, weight: .semibold, design: .rounded))
+                }
+            }
+            .foregroundStyle(stop.hasPassed ? AnyShapeStyle(.tertiary)
+                             : moved ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
+
+            if moved {
+                Text(scheduled.time)
+                    .font(.system(size: 11, design: .rounded))
+                    .monospacedDigit()
+                    .strikethrough()
+                    .foregroundStyle(.tertiary)
             }
         }
         .lineLimit(1)
         .fixedSize()
-        .foregroundStyle(stop.hasPassed ? .tertiary : .primary)
     }
 
     @ViewBuilder
