@@ -677,22 +677,28 @@ private struct DepartureBoard: View {
     }
 }
 
-/// A departure's time. When 511 has it leaving in a different minute, its time leads in
-/// red with the printed one struck through beside it.
+/// A departure's time. Live from 511: red with the live icon, and the printed time struck
+/// through beside it when 511 has it leaving in a different minute. No live data —
+/// offline, or a train 511 isn't tracking — and it's the plain printed time.
 private struct DepartureClock: View {
     let train: NextTrainInfo
     let size: CGFloat
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 4) {
-            if let expected = train.expectedDate, train.isOffSchedule {
+            if let expected = train.expectedDate {
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: size * 0.6, weight: .bold))
+                    .foregroundStyle(Color.caltrainRed)
                 Text(RideFormat.clock(expected))
                     .font(.system(size: size, weight: .semibold, design: .rounded))
                     .foregroundStyle(Color.caltrainRed)
-                Text(train.arrivalTime)
-                    .font(.system(size: size * 0.8, design: .rounded))
-                    .strikethrough()
-                    .foregroundStyle(.tertiary)
+                if train.isOffSchedule {
+                    Text(train.arrivalTime)
+                        .font(.system(size: size * 0.8, design: .rounded))
+                        .strikethrough()
+                        .foregroundStyle(.tertiary)
+                }
             } else {
                 Text(train.arrivalTime)
                     .font(.system(size: size, weight: size > 14 ? .medium : .regular, design: .rounded))
@@ -703,9 +709,11 @@ private struct DepartureClock: View {
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(train.isOffSchedule
-                            ? "\(RideFormat.clock(train.departureDate)), scheduled \(train.arrivalTime)"
-                            : train.arrivalTime)
+        .accessibilityLabel(train.expectedDate == nil
+                            ? train.arrivalTime
+                            : train.isOffSchedule
+                                ? "\(RideFormat.clock(train.departureDate)) live, scheduled \(train.arrivalTime)"
+                                : "\(train.arrivalTime), live")
     }
 }
 
