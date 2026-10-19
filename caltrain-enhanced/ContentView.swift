@@ -150,11 +150,10 @@ extension AnyTransition {
 // MARK: - Root
 
 struct ContentView: View {
-    /// Owned by the tab container so the Ride tab opens on the direction you were reading.
+    /// Owned by the tab container, so it survives switching tabs.
     @Binding var direction: TimetableDirection
-    /// Called with a train and the stop the rider is getting off at, which together are
-    /// everything the Ride tab needs.
-    var onStartRide: (String, String) -> Void = { _, _ in }
+    /// Starts a trip: the train, where you board, and where you get off.
+    var onStartRide: (TrainRef, String, String) -> Void = { _, _, _ in }
 
     @ObservedObject private var location = SharedLocationManager.shared
     @ObservedObject private var live = CaltrainLiveService.shared
@@ -172,7 +171,8 @@ struct ContentView: View {
     @State private var stationQueryEdited = false
     @FocusState private var stationFieldFocused: Bool
     @State private var showTimetable = false
-    @State private var destinationRequest: DestinationRequest?
+    @State private var selectedTrain: TrainRef?
+    @EnvironmentObject private var ride: RideSession
 
     private let ticker = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -233,12 +233,13 @@ struct ContentView: View {
         }
         // The sheet edits `direction` through a binding, so flipping the timetable also
         // flips the board behind it.
-        .sheet(item: $destinationRequest) { request in
-            if let itinerary = request.itinerary {
-                RideDestinationPickerSheet(itinerary: itinerary, selected: nil) { stopName in
-                    onStartRide(request.trainNumber, stopName)
-                }
+        .sheet(item: $selectedTrain) { train in
+            TrainSheet(train: train, boardingHint: location.activeStation?.name) { origin, destination in
+                selectedTrain = nil
+                onStartRide(train, origin, destination)
             }
+            .environmentObject(ride)
+            .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $showTimetable) {
             TimetableSheet(direction: $direction,
@@ -449,10 +450,7 @@ struct ContentView: View {
     }
 
     private func chooseDestination(_ trainNumber: String) {
-        guard let station = location.activeStation else { return }
-        destinationRequest = DestinationRequest(trainNumber: trainNumber,
-                                                originName: station.name,
-                                                northbound: direction.isNorth)
+        selectedTrain = TrainRef(trainNumber: trainNumber, northbound: direction.isNorth)
     }
 
     /// How far back to look for a train whose printed time has passed but which 511 says
@@ -625,7 +623,7 @@ private struct DepartureBoard: View {
                 .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Track this train on the Ride tab")
+                .accessibilityHint("Shows this train's stops")
             }
         }
         .padding(.horizontal, 20)
@@ -633,7 +631,7 @@ private struct DepartureBoard: View {
     }
 
     /// A board can say when a train leaves but not where you're going, so that's the one
-    /// thing it asks — and the answer is enough to start following the ride.
+    /// thing it asks: this opens the train's stops, and tapping one starts the trip.
     private func rideLink(_ train: NextTrainInfo) -> some View {
         Button { onChooseDestination(train.trainNumber) } label: {
             HStack(spacing: 6) {
@@ -655,7 +653,7 @@ private struct DepartureBoard: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Choose the station you're getting off at")
-        .accessibilityHint("Opens the stops on train \(train.trainNumber), then follows the ride")
+        .accessibilityHint("Opens the stops on train \(train.trainNumber)")
     }
 
     private var timetableLink: some View {
@@ -909,7 +907,7 @@ private struct TimetableCell: View {
 
 private struct TimetableSheet: View {
     let stationName: String
-    let onStartRide: (String, String) -> Void
+    let onStartRide: (TrainRef, String, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var live = CaltrainLiveService.shared
@@ -928,7 +926,7 @@ private struct TimetableSheet: View {
 
     init(direction: Binding<TimetableDirection>,
          stationName: String,
-         onStartRide: @escaping (String, String) -> Void) {
+         onStartRide: @escaping (TrainRef, String, String) -> Void) {
         self.stationName = stationName
         self.onStartRide = onStartRide
         let day = CaltrainService.currentServiceDay()
@@ -1149,7 +1147,8 @@ private struct TimetableSheet: View {
                         // A cell names a train and a station, which is exactly a ride:
                         // this train, off at that stop.
                         Button {
-                            onStartRide(train.trainNumber, station)
+                            onStartRide(TrainRef(trainNumber: train.trainNumber, northbound: direction.isNorth),
+                                        stationName, station)
                             dismiss()
                         } label: {
                             TimetableCell(scheduled: train.times[station],
@@ -1229,21 +1228,6 @@ extension View {
             RoundedRectangle(cornerRadius: Metrics.cardCorner, style: .continuous)
                 .fill(Color(.secondarySystemGroupedBackground))
         )
-    }
-}
-
-/// A pending "where are you getting off?" question about one train from one station.
-private struct DestinationRequest: Identifiable {
-    let trainNumber: String
-    let originName: String
-    let northbound: Bool
-
-    var id: String { "\(trainNumber)@\(originName)" }
-
-    var itinerary: RideItinerary? {
-        CaltrainService.shared.itinerary(trainNumber: trainNumber,
-                                         northbound: northbound,
-                                         boardingAt: originName)
     }
 }
 

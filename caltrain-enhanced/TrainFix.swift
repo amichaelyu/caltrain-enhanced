@@ -2,10 +2,9 @@
 //  TrainFix.swift
 //  caltrain-enhanced
 //
-//  Where one train is right now, for screens that aren't riding it: the Plan board's
-//  "where's my train" line and every puck on the Map tab. Same estimator and placement
-//  the Ride tab uses, run over the train's whole run instead of from a boarding station,
-//  so all three tabs put a train in the same place.
+//  Where one train is right now: every puck on the Map tab and the train sheet's
+//  "between X and Y". The same estimator a trip uses, run over the train's whole run
+//  instead of from a boarding station, so every screen puts a train in the same place.
 //
 
 import Foundation

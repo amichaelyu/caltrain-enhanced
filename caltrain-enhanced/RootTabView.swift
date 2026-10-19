@@ -2,20 +2,19 @@
 //  RootTabView.swift
 //  caltrain-enhanced
 //
-//  Two tabs, one shared idea of the trip: Plan is "when does a train leave", Ride is
-//  "where am I on the one I'm on". Direction and the ride itself live here so tapping a
-//  departure on Plan is the same act as starting a ride.
+//  Two tabs, one shared idea of the trip: Plan is "when does a train leave", Map is
+//  "where is everything, and where am I on the one I'm on". Direction and the trip live
+//  here so picking a stop on Plan is the same act as starting a trip.
 //
 
 import SwiftUI
 
 struct RootTabView: View {
     private enum Tab {
-        case plan, map, ride
+        case plan, map
     }
 
     @StateObject private var ride = RideSession()
-    @ObservedObject private var location = SharedLocationManager.shared
 
     @State private var selection: Tab = .plan
     @State private var direction: TimetableDirection = .northbound
@@ -29,24 +28,19 @@ struct RootTabView: View {
             TrainMapView()
                 .tabItem { Label("Map", systemImage: "map") }
                 .tag(Tab.map)
-
-            RideView(direction: $direction)
-                .tabItem { Label("Ride", systemImage: "tram.fill") }
-                .tag(Tab.ride)
         }
         .environmentObject(ride)
         .tint(Color.caltrainRed)
     }
 
-    /// Naming a train and a stop on Plan is the whole of a ride, so it boards there and
-    /// hands the rider straight to the Ride tab.
-    private func startRide(_ trainNumber: String, _ destinationName: String) {
-        guard let station = location.activeStation else { return }
-        ride.start(trainNumber: trainNumber,
-                   from: station.name,
-                   northbound: direction.isNorth,
-                   destinationName: destinationName)
-        selection = .ride
+    /// A trip is a train, where you board and where you get off. Starting one hands you
+    /// to the map, which follows it.
+    private func startRide(_ train: TrainRef, _ origin: String, _ destination: String) {
+        ride.start(trainNumber: train.trainNumber,
+                   from: origin,
+                   northbound: train.northbound,
+                   destinationName: destination)
+        selection = .map
     }
 }
 
