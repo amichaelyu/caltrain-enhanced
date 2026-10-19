@@ -89,8 +89,8 @@ struct TrainMapView: View {
         .onDisappear { isVisible = false; updateLiveFeed() }
     }
 
-    /// Count of trains out, and how many of them 511 is actually tracking. The 511 wording
-    /// doubles as the attribution their data terms ask for.
+    /// Count of trains out, and how many of them 511 is actually tracking. 511's
+    /// attribution lives in Settings.
     private func summary(_ fixes: [TrainFix]) -> some View {
         let tracked = fixes.filter(\.isLive).count
         return HStack(spacing: 6) {
@@ -98,7 +98,7 @@ struct TrainMapView: View {
                 .font(.system(size: 10, weight: .bold))
             Text(fixes.isEmpty
                  ? "No trains running"
-                 : "\(fixes.count) \(fixes.count == 1 ? "train" : "trains") · \(tracked) live from 511.org")
+                 : "\(fixes.count) \(fixes.count == 1 ? "train" : "trains") · \(tracked) live")
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(tracked > 0 ? Color.caltrainRed : .secondary)
@@ -206,7 +206,7 @@ private struct TrainDetailCard: View {
             HStack(spacing: 4) {
                 Image(systemName: fix.isLive ? "dot.radiowaves.left.and.right" : "clock")
                     .font(.system(size: 9, weight: .bold))
-                Text(fix.isLive ? "\(lateness) · live from 511.org" : lateness)
+                Text(fix.isLive ? "\(lateness) · live" : lateness)
             }
             .font(.caption.weight(.semibold))
             .foregroundStyle(fix.isLive && fix.estimate.delayMinutes > 0 ? Color.caltrainRed : .secondary)

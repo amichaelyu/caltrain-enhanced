@@ -23,6 +23,10 @@ struct RideView: View {
     @Binding var direction: TimetableDirection
 
     @State private var now = Date()
+    @State private var smoother = PlacementSmoother()
+    /// Where the train is drawn, eased each tick by `smoother`; keyed by `rideKey`.
+    @State private var placement: RidePlacement?
+    @State private var placementKey: String?
     @State private var showTrainPicker = false
     @State private var showDestinationPicker = false
 
@@ -43,12 +47,8 @@ struct RideView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     if let itinerary {
-                        let estimate = RideEstimator.estimate(for: itinerary,
-                                                              userLocation: location.userLocation,
-                                                              live: live.train(itinerary.trainNumber,
-                                                                               northbound: itinerary.northbound,
-                                                                               at: now),
-                                                              now: now)
+                        let estimate = estimate(for: itinerary, at: now)
+                        let placement = placementKey == rideKey ? placement : estimate.placement(at: now)
                         RideDestinationCard(estimate: estimate,
                                             destinationName: ride.destinationName,
                                             now: now,
@@ -57,6 +57,7 @@ struct RideView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionLabel("On the line")
                             RideMap(estimate: estimate,
+                                    placement: placement,
                                     destinationName: ride.destinationName,
                                     now: now,
                                     onSelect: setDestination)
@@ -69,6 +70,7 @@ struct RideView: View {
                                 RideStatusPill(estimate: estimate)
                             }
                             RideTimeline(estimate: estimate,
+                                         placement: placement,
                                          destinationName: ride.destinationName,
                                          now: now,
                                          onSelect: setDestination)
@@ -121,8 +123,36 @@ struct RideView: View {
         .onChange(of: ride.isActive) { _, _ in updateLiveFeed() }
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
-            withAnimation(.linear(duration: 1)) { now = date }
+            withAnimation(.linear(duration: 1)) {
+                now = date
+                advancePlacement(at: date)
+            }
         }
+    }
+
+    private func estimate(for itinerary: RideItinerary, at now: Date) -> RideEstimate {
+        RideEstimator.estimate(for: itinerary,
+                               userLocation: location.userLocation,
+                               live: live.train(itinerary.trainNumber,
+                                                northbound: itinerary.northbound,
+                                                at: now),
+                               now: now)
+    }
+
+    /// Which run `placement` belongs to.
+    private var rideKey: String? {
+        ride.trainNumber.map { "\($0)|\(ride.originName ?? "-")|\(ride.northbound)" }
+    }
+
+    private func advancePlacement(at date: Date) {
+        guard let itinerary, let key = rideKey else {
+            placement = nil
+            placementKey = nil
+            return
+        }
+        let estimate = estimate(for: itinerary, at: date)
+        placement = smoother.update(estimate.placement(at: date), key: key, stopCount: estimate.stops.count)
+        placementKey = key
     }
 
     private var emptyState: some View {
@@ -225,7 +255,7 @@ private struct RideStatusPill: View {
 
     private var sourceDescription: String {
         switch estimate.source {
-        case .feed: "live from 511.org"
+        case .feed: "live"
         case .location: "tracked from your location"
         case .timetable: "timetable only"
         }
@@ -369,6 +399,7 @@ private struct RideDestinationCard: View {
 /// scheduled gap between them and a marker for where the train is right now.
 private struct RideTimeline: View {
     let estimate: RideEstimate
+    let placement: RidePlacement?
     let destinationName: String?
     let now: Date
     let onSelect: (String) -> Void
@@ -455,7 +486,7 @@ private struct RideTimeline: View {
     /// you're standing in.
     private var positionY: CGFloat? {
         guard stops.first?.hasPassed == true else { return nil }
-        guard let placement = estimate.placement(at: now), placement.segmentIndex + 1 < stops.count else {
+        guard let placement, placement.segmentIndex + 1 < stops.count else {
             // Nothing to interpolate within: fall back to the last stop behind us.
             guard let lastPassed = stops.lastIndex(where: { $0.hasPassed }) else { return nil }
             return center(lastPassed)

@@ -15,6 +15,8 @@ import CoreLocation
 
 struct RideMap: View {
     let estimate: RideEstimate
+    /// Where to draw the train; eased by the caller so it glides between fixes.
+    let placement: RidePlacement?
     let destinationName: String?
     let now: Date
     let onSelect: (String) -> Void
@@ -28,7 +30,6 @@ struct RideMap: View {
 
     private var stops: [RideStopEstimate] { estimate.stops }
     private var destinationIndex: Int? { estimate.index(of: destinationName) }
-    private var placement: RidePlacement? { estimate.placement(at: now) }
 
     var body: some View {
         Map(position: $camera, interactionModes: [.pan, .zoom]) {
@@ -193,11 +194,10 @@ struct RideMap: View {
     }
 
     /// Says plainly whether the puck is 511, your phone, or the timetable, so a train drawn
-    /// in the wrong place is never mistaken for a fact. The 511 wording doubles as the
-    /// attribution their data terms ask for.
+    /// in the wrong place is never mistaken for a fact. 511's attribution lives in Settings.
     private var sourceLabel: String {
         switch placement?.source ?? estimate.source {
-        case .feed: "Live from 511.org"
+        case .feed: "Live"
         case .location: "From your location"
         case .timetable: "From the timetable"
         }

@@ -425,6 +425,44 @@ enum RideFormat {
 
 // MARK: - Session
 
+/// Eases the drawn train toward wherever the estimate puts it, so a fresh fix — the
+/// rider's phone every ~75 m, 511's every minute — nudges it along instead of snapping it.
+struct PlacementSmoother {
+    private var progress: Double?
+    private var key: String?
+
+    /// Share of the remaining gap closed per tick. Called once a second, this trails the
+    /// estimate by about a second of travel.
+    private let rate = 0.5
+
+    /// `key` names the run; a new one starts fresh rather than gliding over from the last.
+    mutating func update(_ target: RidePlacement?, key: String, stopCount: Int) -> RidePlacement? {
+        guard let target, stopCount >= 2 else { progress = nil; return target }
+        let goal = Double(target.segmentIndex) + target.fraction
+
+        if key != self.key || progress == nil {
+            self.key = key
+            progress = goal
+        } else if let current = progress {
+            let gap = goal - current
+            if abs(gap) > 1 {
+                // A whole leg out is a new fact, not noise.
+                progress = goal
+            } else if gap > 0 {
+                progress = current + gap * rate
+            }
+            // A fix slightly behind holds the train where it is: trains don't reverse,
+            // and the estimate catches up within a few seconds.
+        }
+
+        let value = progress ?? goal
+        let segment = min(max(Int(value.rounded(.down)), 0), stopCount - 2)
+        return RidePlacement(segmentIndex: segment,
+                             fraction: min(max(value - Double(segment), 0), 1),
+                             source: target.source)
+    }
+}
+
 /// The ride the app is currently following: which train, where it was boarded, and where
 /// the rider is getting off. Lives above the tabs so picking a train on Plan is the same
 /// act as starting a ride.
