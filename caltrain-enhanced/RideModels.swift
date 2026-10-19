@@ -186,9 +186,9 @@ enum RideEstimator {
               let nextCall = live.stop(named: stops[next].station.name)
         else { return nil }
 
-        // Carried onto the stops the feed doesn't predict: the ones behind the train, and
-        // the terminus.
-        let delay = nextCall.delay
+        // How late the train runs against the timetable, carried onto the stops the feed
+        // doesn't predict: the ones behind the train, and the terminus. Negative when early.
+        let delay = nextCall.expected.map { $0.timeIntervalSince(stops[next].scheduled) } ?? 0
 
         // Only once the train is out of the boarding station is there a leg to place it on.
         // Either fix has to put it on the leg the feed says it's on, or it's a stale or
@@ -388,6 +388,17 @@ extension RideEstimate {
 
         // Past the last stop on the run.
         return RidePlacement(segmentIndex: stops.count - 2, fraction: 1, source: clockSource)
+    }
+
+    /// Drawn this far along a leg, the train is at the platform ahead rather than on its
+    /// way there: a fix on a standing train lands a little short of the stop's point.
+    private static let pulledIn = 0.97
+
+    /// The stop the train is at, or the last one it left, as it's drawn: the stop after
+    /// its leg once it has pulled in there. Nil before it's due out of its origin.
+    func currentStopIndex(at now: Date) -> Int? {
+        guard let placement = placement(at: now) else { return nil }
+        return placement.fraction >= Self.pulledIn ? placement.segmentIndex + 1 : placement.segmentIndex
     }
 
     /// How long a train stands at a platform. The timetable and 511 give one time per

@@ -12,8 +12,13 @@ import UIKit
 // MARK: - Design tokens
 
 extension Color {
-    /// Restrained Caltrain red — the single accent in an otherwise monochrome UI.
-    static let caltrainRed = Color(red: 0.796, green: 0.125, blue: 0.180) // #CB202E
+    /// Caltrain red — the single accent in an otherwise monochrome UI. #E31837 in light
+    /// mode; a deeper #B6132C in dark, where the bright one glares against black.
+    static let caltrainRed = Color(UIColor { traits in
+        traits.userInterfaceStyle == .dark
+            ? UIColor(red: 0xB6 / 255, green: 0x13 / 255, blue: 0x2C / 255, alpha: 1)
+            : UIColor(red: 0xE3 / 255, green: 0x18 / 255, blue: 0x37 / 255, alpha: 1)
+    })
 
     /// A train's colour wherever it appears: red northbound, ink southbound (black, or
     /// white in dark mode). Live data is marked with its icon, not its colour.
@@ -337,8 +342,10 @@ struct ContentView: View {
     private var stationName: some View {
         Button { beginEditingStation() } label: {
             HStack(spacing: 8) {
-                // A pin means "you picked this"; the arrow means "this is where you are".
-                Image(systemName: location.isUsingPickedStation ? "mappin.circle.fill" : "location.fill")
+                // A pin means "you picked this"; the arrow means "this is where you are";
+                // a crossed arrow means we don't know, so this is a stand-in.
+                Image(systemName: location.isUsingPickedStation ? "mappin.circle.fill"
+                      : location.isUsingFallbackStation ? "location.slash" : "location.fill")
                     .font(.system(size: 15))
                     .foregroundStyle(Color.caltrainRed)
                 Text(location.activeStation?.name ?? "Locating…")

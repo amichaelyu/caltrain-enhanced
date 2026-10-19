@@ -102,12 +102,8 @@ struct LiveTrain: Decodable {
 struct LiveStop: Decodable {
     /// Already spelled the way `CaltrainStations` spells it.
     let station: String
-    let aimed: Date
     /// Nil until the train is tracked, e.g. before it leaves its origin.
     let expected: Date?
-
-    /// How late the prediction runs against 511's own schedule. Negative when early.
-    var delay: TimeInterval { expected.map { $0.timeIntervalSince(aimed) } ?? 0 }
 }
 
 // MARK: - Service

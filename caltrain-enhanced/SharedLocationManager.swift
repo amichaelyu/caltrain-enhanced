@@ -67,10 +67,18 @@ final class SharedLocationManager: NSObject, ObservableObject, CLLocationManager
 
     // MARK: - Active station
 
-    /// The station the app should show: an explicit pick wins over the nearest one.
-    var activeStation: CaltrainStation? { pickedStation ?? nearestStation }
+    /// Where the app starts when it has no idea where you are: location denied, or no
+    /// fix yet. Palo Alto sits mid-line, and another station is one tap away.
+    static let fallbackStation = CaltrainStations.shared.station(named: "Palo Alto")
+
+    /// The station the app should show: an explicit pick wins over the nearest one, and
+    /// with neither it's the fallback rather than nothing.
+    var activeStation: CaltrainStation? { pickedStation ?? nearestStation ?? Self.fallbackStation }
 
     var isUsingPickedStation: Bool { pickedStation != nil }
+
+    /// Showing the fallback because nothing says where you are.
+    var isUsingFallbackStation: Bool { pickedStation == nil && nearestStation == nil }
 
     func selectStation(_ station: CaltrainStation) {
         pickedStation = station

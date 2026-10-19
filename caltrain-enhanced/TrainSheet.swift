@@ -57,7 +57,7 @@ struct TrainSheet: View {
                     header(run: run, estimate: estimate, live: liveTrain, now: now)
                     if isRiding {
                         tripCard(now: now)
-                    } else if let origin = boarding(in: estimate), let terminus = run.terminus {
+                    } else if let origin = boarding(in: estimate, now: now), let terminus = run.terminus {
                         hopOnButton(origin: origin, destination: terminus.station.name)
                     }
                     stops(estimate: estimate, now: now)
@@ -123,13 +123,15 @@ struct TrainSheet: View {
     // MARK: Trip
 
     /// Where "Hop on" boards you. Hopping on means you're aboard already, so it's the
-    /// stop the train last left — or its origin, if it hasn't set off. Nil once there's
-    /// nowhere left to ride to.
-    private func boarding(in estimate: RideEstimate) -> String? {
+    /// stop the train is standing at or last left — or its origin, if it hasn't set off.
+    /// Goes by where the train is drawn, not the feed's stop list: 511 keeps listing a
+    /// stop until the train leaves it, which would board you one stop back. Nil once
+    /// there's nowhere left to ride to.
+    private func boarding(in estimate: RideEstimate, now: Date) -> String? {
         let stops = estimate.stops
-        let behind = stops.lastIndex(where: \.hasPassed) ?? 0
-        guard behind < stops.count - 1 else { return nil }
-        return stops[behind].station.name
+        let here = estimate.currentStopIndex(at: now) ?? 0
+        guard here < stops.count - 1 else { return nil }
+        return stops[here].station.name
     }
 
     private func hopOnButton(origin: String, destination: String) -> some View {
@@ -213,11 +215,13 @@ struct TrainSheet: View {
     // MARK: Stops
 
     private func stops(estimate: RideEstimate, now: Date) -> some View {
-        let origin = isRiding ? ride.originName : boarding(in: estimate)
+        let origin = isRiding ? ride.originName : boarding(in: estimate, now: now)
         let originIndex = origin.flatMap { estimate.index(of: $0) }
+        // Everything before the stop the train is at or last left is behind it.
+        let here = estimate.currentStopIndex(at: now) ?? 0
         // On a trip only what's still ahead of you matters; otherwise the whole run.
-        let shown = estimate.stops.enumerated().filter { index, stop in
-            !isRiding || (!isBehind(stop, now: now) && originIndex.map { index >= $0 } != false)
+        let shown = estimate.stops.enumerated().filter { index, _ in
+            !isRiding || (index >= here && originIndex.map { index >= $0 } != false)
         }
         return VStack(alignment: .leading, spacing: 8) {
             SectionLabel(isRiding ? "Stops ahead" : "Stops")
@@ -234,7 +238,7 @@ struct TrainSheet: View {
                         }
                     } label: {
                         stopRow(stop, estimate: estimate, isBoarding: index == originIndex,
-                                isBehind: isBehind(stop, now: now))
+                                isBehind: index < here)
                     }
                     .buttonStyle(.plain)
                     // Ignoring taps rather than `.disabled`, which would dim the row: the
@@ -257,15 +261,6 @@ struct TrainSheet: View {
                 .foregroundStyle(.tertiary)
                 .padding(.leading, 4)
         }
-    }
-
-    /// How long a stop stays in full colour after its time. The train may be standing
-    /// there or only just gone, and riders still glance back at it.
-    private static let behindAfter: TimeInterval = 5 * 60
-
-    /// Greyed out, and dropped from a trip's list, only once it's well behind.
-    private func isBehind(_ stop: RideStopEstimate, now: Date) -> Bool {
-        stop.hasPassed && now >= stop.projected.addingTimeInterval(Self.behindAfter)
     }
 
     private func stopRow(_ stop: RideStopEstimate, estimate: RideEstimate, isBoarding: Bool, isBehind: Bool) -> some View {

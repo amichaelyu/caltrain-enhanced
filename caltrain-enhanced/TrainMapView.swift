@@ -21,7 +21,12 @@ struct TrainMapView: View {
 
     @State private var isVisible = false
     @State private var selectedID: String?
+    @State private var detent: PresentationDetent = TrainMapView.collapsedDetent
     @State private var camera: MapCameraPosition = .rect(TrainMapView.corridorRect)
+
+    /// The train sheet's smallest size: the trip card and nothing more.
+    private static let collapsedHeight: CGFloat = 250
+    private static let collapsedDetent = PresentationDetent.height(collapsedHeight)
 
     /// Where every train is as of the last tick.
     @State private var fixes: [TrainFix] = []
@@ -43,19 +48,22 @@ struct TrainMapView: View {
     private let ticker = Timer.publish(every: TrainMapView.tick, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        TimelineView(.animation(paused: scenePhase != .active)) { context in
-            // The trip is drawn over the map, not by it: MapKit rasterises its lines in
-            // the background, and a line that changes every frame smeared into a blob
-            // while bead annotations made it re-lay-out every station label. A Canvas
-            // redraws cheaply at the display's full rate and touches nothing of MapKit's.
-            MapReader { proxy in
-                map(at: context.date)
-                    .overlay {
-                        Canvas { graphics, _ in
-                            drawTrip(in: &graphics, proxy: proxy, at: context.date)
+        GeometryReader { geometry in
+            TimelineView(.animation(paused: scenePhase != .active)) { context in
+                // The trip is drawn over the map, not by it: MapKit rasterises its lines in
+                // the background, and a line that changes every frame smeared into a blob
+                // while bead annotations made it re-lay-out every station label. A Canvas
+                // redraws cheaply at the display's full rate and touches nothing of MapKit's.
+                MapReader { proxy in
+                    map(at: context.date, sheetCover: sheetCover(in: geometry.size.height))
+                        .overlay {
+                            Canvas { graphics, _ in
+                                drawTrip(in: &graphics, proxy: proxy, at: context.date)
+                            }
+                            .allowsHitTesting(false)
                         }
-                        .allowsHitTesting(false)
-                    }
+                        .overlay { pucks(proxy: proxy, at: context.date) }
+                }
             }
         }
         .safeAreaInset(edge: .top) { summary(fixes) }
@@ -75,7 +83,7 @@ struct TrainMapView: View {
                                northbound: train.northbound, destinationName: destination)
                 }
                 .environmentObject(ride)
-                .presentationDetents([.height(250), .medium, .large])
+                .presentationDetents([Self.collapsedDetent, .medium, .large], selection: $detent)
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationContentInteraction(.scrolls)
             }
@@ -94,7 +102,16 @@ struct TrainMapView: View {
         .onDisappear { isVisible = false; updateLiveFeed() }
     }
 
-    private func map(at date: Date) -> some View {
+    /// How much of the map's foot the train sheet is hiding. The sheet is a separate
+    /// window, so the map can't tell on its own; told, it frames the trip in what's left.
+    private func sheetCover(in height: CGFloat) -> CGFloat {
+        guard selectedID != nil else { return 0 }
+        // At its largest the sheet hides nearly everything; half is the most worth
+        // framing for, and the first drag down shows the rest.
+        return detent == Self.collapsedDetent ? Self.collapsedHeight : height / 2
+    }
+
+    private func map(at date: Date, sheetCover: CGFloat) -> some View {
         Map(position: $camera, selection: $selectedID) {
             MapPolyline(coordinates: CaltrainCorridor.path)
                 .stroke(Color.primary.opacity(0.22),
@@ -111,21 +128,57 @@ struct TrainMapView: View {
 
             UserAnnotation()
 
-            ForEach(fixes) { fix in
+            ForEach(shownFixes) { fix in
                 // Anchored by its foot, so the number floats above the line instead of
                 // sitting on a station's dot.
                 Annotation("#\(fix.run.trainNumber)", coordinate: drawnCoordinate(fix, at: date), anchor: .bottom) {
+                    // Invisible: it only takes the tap. The puck you see is drawn by
+                    // `pucks`, over the trip, at this same point.
                     MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
+                        .opacity(0)
                 }
                 .annotationTitles(.hidden)
                 .tag(fix.id)
             }
         }
+        .safeAreaPadding(.bottom, sheetCover)
         .mapStyle(.standard(pointsOfInterest: .excludingAll))
+        // The app's red tint reaches the "you are here" dot and made it look like a
+        // train; the map gets the stock blue back.
+        .tint(Color(.systemBlue))
         .mapControls {
             MapUserLocationButton()
             MapCompass()
         }
+    }
+
+    /// On a trip, only your train: the rest would just be clutter around it.
+    private var shownFixes: [TrainFix] {
+        guard let rideID else { return fixes }
+        return fixes.filter { $0.id == rideID }
+    }
+
+    /// The trains as you see them. MapKit paints its annotations under anything laid
+    /// over the map, which put the trip's pulses across the pucks; so the annotations
+    /// are left blank for tapping, and the pucks are drawn here, above the trip, at the
+    /// same screen points. The selected one goes on last so it sits over the others.
+    private func pucks(proxy: MapProxy, at date: Date) -> some View {
+        ZStack {
+            ForEach(shownFixes.sorted { ($0.id == selectedID ? 1 : 0) < ($1.id == selectedID ? 1 : 0) }) { fix in
+                if let point = proxy.convert(drawnCoordinate(fix, at: date), to: .local) {
+                    MapTrainPuck(fix: fix, isSelected: fix.id == selectedID)
+                        // At its own size, or the zero frame below would squeeze the
+                        // number out of its label.
+                        .fixedSize()
+                        // A zero-size frame aligned to the bottom puts the puck's foot,
+                        // where the train is, on the point: the annotation's anchor.
+                        .frame(width: 0, height: 0, alignment: .bottom)
+                        .position(point)
+                }
+            }
+        }
+        .clipped()
+        .allowsHitTesting(false)
     }
 
     // MARK: Trip
@@ -138,14 +191,16 @@ struct TrainMapView: View {
         "\(rideID ?? "-")|\(ride.originName ?? "-")"
     }
 
-    /// A new trip opens its train's sheet and frames the stretch you're riding.
+    /// A new trip opens its train's sheet, shrunk to the trip card, and frames the
+    /// stretch you're riding in the map above it.
     private func startTrip() {
         trip = makeTrip()
         guard let rideID else { return }
         selectedID = rideID
+        detent = Self.collapsedDetent
         if let trip, let rect = Self.boundingRect(trip.coordinates) {
             withAnimation(.easeInOut(duration: 0.5)) {
-                camera = .rect(rect.insetBy(dx: -rect.size.width * 0.35, dy: -rect.size.height * 0.35))
+                camera = .rect(rect.insetBy(dx: -rect.size.width * 0.1, dy: -rect.size.height * 0.1))
             }
         }
     }
@@ -363,7 +418,14 @@ struct TrainMapView: View {
         .foregroundStyle(tracked > 0 ? Color.caltrainRed : .secondary)
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
-        .background(.thinMaterial, in: Capsule())
+        // Solid in the dark, where the material went muddy over the map.
+        .background {
+            if colorScheme == .dark {
+                Capsule().fill(Color(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255))
+            } else {
+                Capsule().fill(.thinMaterial)
+            }
+        }
         .padding(.top, 8)
     }
 
