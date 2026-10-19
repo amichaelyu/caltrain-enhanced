@@ -10,6 +10,7 @@
 
 import SwiftUI
 import MapKit
+import UIKit
 
 struct TrainMapView: View {
     @EnvironmentObject private var ride: RideSession
@@ -43,7 +44,19 @@ struct TrainMapView: View {
 
     var body: some View {
         TimelineView(.animation(paused: scenePhase != .active)) { context in
-            map(at: context.date)
+            // The trip is drawn over the map, not by it: MapKit rasterises its lines in
+            // the background, and a line that changes every frame smeared into a blob
+            // while bead annotations made it re-lay-out every station label. A Canvas
+            // redraws cheaply at the display's full rate and touches nothing of MapKit's.
+            MapReader { proxy in
+                map(at: context.date)
+                    .overlay {
+                        Canvas { graphics, _ in
+                            drawTrip(in: &graphics, proxy: proxy, at: context.date)
+                        }
+                        .allowsHitTesting(false)
+                    }
+            }
         }
         .safeAreaInset(edge: .top) { summary(fixes) }
         .safeAreaInset(edge: .bottom) {
@@ -93,21 +106,6 @@ struct TrainMapView: View {
                         .fill(Color(.systemBackground))
                         .frame(width: 9, height: 9)
                         .overlay(Circle().strokeBorder(Color.primary.opacity(0.4), lineWidth: 2))
-                }
-            }
-
-            if let trip {
-                tripTrail(trip, at: date)
-            }
-
-            // Still coming to get you: a dotted line from the train to your platform.
-            if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }) {
-                let line = approach.slice(from: approach.distance(of: drawnCoordinate(fix, at: tickDate)),
-                                          to: approach.length)
-                if line.count >= 2 {
-                    MapPolyline(coordinates: line)
-                        .stroke(rideTint.opacity(colorScheme == .dark ? 0.6 : 0.5),
-                                style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
                 }
             }
 
@@ -181,64 +179,71 @@ struct TrainMapView: View {
     private var rideTint: Color { .direction(northbound: ride.northbound) }
 
     /// Your stretch of line: faint ahead, solid behind the train, and pulses running on
-    /// toward your stop. The lines only change once a tick: MapKit draws lines in tiles in
-    /// the background, and redrawing them every frame left blurry blobs where it couldn't
-    /// keep up. The pulses are beads riding on the line, which it can move every frame.
-    @MapContentBuilder
-    private func tripTrail(_ trip: RideRoute, at date: Date) -> some MapContent {
-        let done = rideTrainDistance(on: trip, at: tickDate)
-        let style = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
+    /// toward your stop. Before the train reaches you, a dotted line from it to your
+    /// platform. All in screen space, projected through the map each frame.
+    private func drawTrip(in graphics: inout GraphicsContext, proxy: MapProxy, at date: Date) {
+        let faint = UIColor(rideTint).withAlphaComponent(colorScheme == .dark ? 0.45 : 0.32)
+        let lineStyle = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
 
-        MapPolyline(coordinates: trip.coordinates)
-            .stroke(rideTint.opacity(colorScheme == .dark ? 0.45 : 0.32), style: style)
+        if let trip {
+            let done = rideTrainDistance(on: trip, at: date)
 
-        let ridden = trip.slice(from: 0, to: done)
-        if ridden.count >= 2 {
-            MapPolyline(coordinates: ridden).stroke(rideTint, style: style)
-        }
-
-        ForEach(beads(on: trip, done: done, at: date)) { bead in
-            Annotation("", coordinate: bead.coordinate, anchor: .center) {
-                Circle()
-                    .fill(rideTint.opacity(bead.strength * (colorScheme == .dark ? 0.5 : 0.4)))
-                    .frame(width: bead.size, height: bead.size)
-                    .allowsHitTesting(false)
+            if let path = path(trip.coordinates, proxy: proxy) {
+                graphics.stroke(path, with: .color(Color(faint)), style: lineStyle)
             }
-            .annotationTitles(.hidden)
+            if let path = path(trip.slice(from: 0, to: done), proxy: proxy) {
+                graphics.stroke(path, with: .color(rideTint.opacity(0.9)), style: lineStyle)
+            }
+
+            // Each pulse is a comet: one continuous run of short segments fading from
+            // its head back to nothing, so it reads as a single moving glow.
+            for (from, to, strength) in pulses(on: trip, done: done, at: date) {
+                guard let path = path(trip.slice(from: from, to: to), proxy: proxy) else { continue }
+                let alpha = strength * (colorScheme == .dark ? 0.55 : 0.4)
+                graphics.stroke(path, with: .color(rideTint.opacity(alpha)),
+                                style: StrokeStyle(lineWidth: 7, lineCap: .butt, lineJoin: .round))
+            }
+        }
+
+        if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }),
+           let path = path(approach.slice(from: approach.distance(of: drawnCoordinate(fix, at: date)),
+                                          to: approach.length), proxy: proxy) {
+            graphics.stroke(path, with: .color(rideTint.opacity(colorScheme == .dark ? 0.6 : 0.5)),
+                            style: StrokeStyle(lineWidth: 4, lineCap: .round, dash: [1, 9]))
         }
     }
 
-    private struct Bead: Identifiable {
-        let id: Int
-        let coordinate: CLLocationCoordinate2D
-        /// 1 at the head of a pulse, fading toward its tail.
-        let strength: Double
-        let size: CGFloat
+    /// A run of coordinates as a screen-space path; nil when there's nothing to draw.
+    private func path(_ coordinates: [CLLocationCoordinate2D], proxy: MapProxy) -> Path? {
+        let points = coordinates.compactMap { proxy.convert($0, to: .local) }
+        guard points.count >= 2 else { return nil }
+        var path = Path()
+        path.move(to: points[0])
+        for point in points.dropFirst() { path.addLine(to: point) }
+        return path
     }
 
-    /// Two pulses half a period apart, each a head bead and a short fading tail, running
-    /// from the train (or your platform, before it's there) to your stop.
-    private func beads(on trip: RideRoute, done: Double, at date: Date) -> [Bead] {
+    /// Two pulses half a period apart, each a tail of fading pieces behind its head,
+    /// running from the train (or your platform, before it's there) to your stop.
+    private func pulses(on trip: RideRoute, done: Double, at date: Date) -> [(from: Double, to: Double, strength: Double)] {
         let remaining = trip.length - done
         guard remaining > 1 else { return [] }
-        let tail = max(remaining * 0.15, 250)
+        let tail = max(remaining * 0.2, 400)
+        let pieces = 12
         let phase = date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: Self.pulsePeriod)
             / Self.pulsePeriod
-        var beads: [Bead] = []
+        var out: [(Double, Double, Double)] = []
         for pulse in 0..<2 {
             let t = (phase + Double(pulse) / 2).truncatingRemainder(dividingBy: 1)
             let head = done + (remaining + tail) * t
-            for step in 0..<4 {
-                let at = head - tail * Double(step) / 4
-                guard at > done, at < trip.length else { continue }
-                let strength = 1 - Double(step) / 4
-                beads.append(Bead(id: pulse * 4 + step,
-                                  coordinate: trip.point(at: at),
-                                  strength: strength,
-                                  size: 5 + 3 * strength))
+            for step in 0..<pieces {
+                let to = min(head - tail * Double(step) / Double(pieces), trip.length)
+                let from = max(head - tail * Double(step + 1) / Double(pieces), done)
+                guard to > from else { continue }
+                out.append((from, to, 1 - Double(step) / Double(pieces)))
             }
         }
-        return beads
+        return out
     }
 
     /// How far along your stretch the ride's train is drawn. Zero until it reaches your
