@@ -109,18 +109,6 @@ struct TrainMapView: View {
                 }
             }
 
-            if let destination = ride.destinationName.flatMap(CaltrainStations.shared.station(named:)), rideID != nil {
-                Annotation(destination.name, coordinate: destination.coordinate, anchor: .center) {
-                    ZStack {
-                        Circle().fill(rideTint).frame(width: 20, height: 20)
-                        Image(systemName: "flag.fill")
-                            .font(.system(size: 9, weight: .black))
-                            .foregroundStyle(Color.onDirection(northbound: ride.northbound))
-                    }
-                    .shadow(radius: 1, y: 0.5)
-                }
-            }
-
             UserAnnotation()
 
             ForEach(fixes) { fix in
@@ -178,9 +166,10 @@ struct TrainMapView: View {
     /// The trip's train's colour.
     private var rideTint: Color { .direction(northbound: ride.northbound) }
 
-    /// Your stretch of line: faint ahead, solid behind the train, and pulses running on
-    /// toward your stop. Before the train reaches you, a dotted line from it to your
-    /// platform. All in screen space, projected through the map each frame.
+    /// What's still ahead of you: a faint line from the train to your stop with pulses
+    /// running along it, and the flag at your stop on top. Nothing is left behind the
+    /// train. Before it reaches you, a dotted line from it to your platform. All in
+    /// screen space, projected through the map each frame.
     private func drawTrip(in graphics: inout GraphicsContext, proxy: MapProxy, at date: Date) {
         let faint = UIColor(rideTint).withAlphaComponent(colorScheme == .dark ? 0.45 : 0.32)
         let lineStyle = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
@@ -188,11 +177,8 @@ struct TrainMapView: View {
         if let trip {
             let done = rideTrainDistance(on: trip, at: date)
 
-            if let path = path(trip.coordinates, proxy: proxy) {
+            if let path = path(trip.slice(from: done, to: trip.length), proxy: proxy) {
                 graphics.stroke(path, with: .color(Color(faint)), style: lineStyle)
-            }
-            if let path = path(trip.slice(from: 0, to: done), proxy: proxy) {
-                graphics.stroke(path, with: .color(rideTint.opacity(0.9)), style: lineStyle)
             }
 
             // Each pulse is a comet: one continuous run of short segments fading from
@@ -203,6 +189,18 @@ struct TrainMapView: View {
                 graphics.stroke(path, with: .color(rideTint.opacity(alpha)),
                                 style: StrokeStyle(lineWidth: 7, lineCap: .butt, lineJoin: .round))
             }
+        }
+
+        if let destination = ride.destinationName.flatMap(CaltrainStations.shared.station(named:)),
+           rideID != nil, let point = proxy.convert(destination.coordinate, to: .local) {
+            let disc = Path(ellipseIn: CGRect(x: point.x - 10, y: point.y - 10, width: 20, height: 20))
+            graphics.drawLayer { layer in
+                layer.addFilter(.shadow(color: .black.opacity(0.25), radius: 1, y: 0.5))
+                layer.fill(disc, with: .color(rideTint))
+            }
+            var flag = graphics.resolve(Image(systemName: "flag.fill"))
+            flag.shading = .color(Color.onDirection(northbound: ride.northbound))
+            graphics.draw(flag, in: CGRect(x: point.x - 4.5, y: point.y - 4.5, width: 9, height: 9))
         }
 
         if let approach, let rideID, let fix = fixes.first(where: { $0.id == rideID }) {

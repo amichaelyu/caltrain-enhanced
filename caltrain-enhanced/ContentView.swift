@@ -1067,13 +1067,21 @@ private struct TimetableSheet: View {
                         ScrollViewReader { proxy in
                             ScrollView(.horizontal) {
                                 trainColumns(trainWidth: trainWidth)
+                                    // The content's x in the scroll view's space is minus
+                                    // the scroll offset. (`onScrollGeometryChange` would
+                                    // be neater, but it needs iOS 18.)
+                                    .background {
+                                        GeometryReader { content in
+                                            Color.clear
+                                                .onChange(of: content.frame(in: .named("trainGrid")).minX,
+                                                          initial: true) { _, x in
+                                                    scrollX = -x
+                                                }
+                                        }
+                                    }
                             }
+                            .coordinateSpace(name: "trainGrid")
                             .scrollBounceBehavior(.basedOnSize)
-                            .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                                geometry.contentOffset.x
-                            } action: { _, newValue in
-                                scrollX = newValue
-                            }
                             .onAppear { scrollToNextTrain(proxy) }
                             .onChange(of: serviceDay) {
                                 withoutAnimation { reloadGrid() }
