@@ -16,6 +16,7 @@ struct TrainMapView: View {
     @ObservedObject private var live = CaltrainLiveService.shared
     @ObservedObject private var location = SharedLocationManager.shared
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
 
     @State private var isVisible = false
     @State private var selectedID: String?
@@ -161,7 +162,8 @@ struct TrainMapView: View {
     private static let pulsePeriod: TimeInterval = 2.4
 
     /// Your stretch of line: faint ahead, solid behind the train, and pulses running from
-    /// the train on toward your stop, each brightening as it nears its head.
+    /// the train on toward your stop. The pulses are a gentle shimmer over the faint line,
+    /// not a second line: a shade darker in light mode, a shade lighter in dark mode.
     @MapContentBuilder
     private func tripTrail(_ trip: RideRoute, at date: Date) -> some MapContent {
         let done = rideTrainDistance(on: trip, at: date)
@@ -170,18 +172,17 @@ struct TrainMapView: View {
         let style = StrokeStyle(lineWidth: 7, lineCap: .round, lineJoin: .round)
 
         MapPolyline(coordinates: trip.coordinates)
-            .stroke(Color.caltrainRed.opacity(0.25), style: style)
+            .stroke(Color.caltrainRed.opacity(colorScheme == .dark ? 0.35 : 0.22), style: style)
 
         let ridden = trip.slice(from: 0, to: done)
         if ridden.count >= 2 {
             MapPolyline(coordinates: ridden).stroke(Color.caltrainRed, style: style)
         }
 
-        // Two pulses half a period apart, each a short comet: three steps of rising
-        // opacity toward its head.
+        // Two pulses half a period apart, each a short comet that fades toward its tail.
         ForEach(pulses(done: done, remaining: remaining, length: pulseLength, at: date), id: \.id) { piece in
             MapPolyline(coordinates: trip.slice(from: piece.from, to: piece.to))
-                .stroke(Color.caltrainRed.opacity(piece.opacity), style: style)
+                .stroke(pulseColor.opacity(piece.strength * (colorScheme == .dark ? 0.22 : 0.14)), style: style)
         }
     }
 
@@ -189,7 +190,14 @@ struct TrainMapView: View {
         let id: Int
         let from: Double
         let to: Double
-        let opacity: Double
+        /// 1 at the head of the pulse, fading toward its tail.
+        let strength: Double
+    }
+
+    /// Laid over the faint line: the same red deepens it on a light map, a paler red lifts
+    /// it on a dark one.
+    private var pulseColor: Color {
+        colorScheme == .dark ? Color(red: 1.0, green: 0.55, blue: 0.58) : Color.caltrainRed
     }
 
     private func pulses(done: Double, remaining: Double, length: Double, at date: Date) -> [PulsePiece] {
@@ -206,7 +214,7 @@ struct TrainMapView: View {
                 let lo = max(from, done), hi = min(to, done + remaining)
                 guard hi > lo else { continue }
                 pieces.append(PulsePiece(id: pulse * 3 + step, from: lo, to: hi,
-                                         opacity: 0.85 - Double(step) * 0.25))
+                                         strength: 1 - Double(step) / 3))
             }
         }
         return pieces
