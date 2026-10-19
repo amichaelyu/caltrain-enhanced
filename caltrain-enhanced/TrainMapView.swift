@@ -25,7 +25,8 @@ struct TrainMapView: View {
 
     private var fixes: [TrainFix] {
         CaltrainService.shared.runs(at: now).compactMap { run in
-            TrainFix(run: run,
+            guard !live.isCancelled(run.trainNumber, at: now) else { return nil }
+            return TrainFix(run: run,
                      live: live.train(run.trainNumber, northbound: run.northbound, at: now),
                      now: now)
         }

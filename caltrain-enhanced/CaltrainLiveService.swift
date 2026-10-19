@@ -20,6 +20,59 @@ struct LiveFeed: Decodable {
     /// When the worker fetched it from 511.
     let fetched: Date
     let trains: [LiveTrain]
+    /// Alerts that haven't ended yet. Optional so a worker that predates them still decodes.
+    let alerts: [LiveAlert]?
+    /// "yyyy-MM-dd" (Pacific) dates that run the holiday schedule.
+    let holidays: [String]?
+}
+
+/// A 511 service alert: a delay, a cancellation, track work, an elevator out.
+struct LiveAlert: Decodable, Identifiable {
+    struct Period: Decodable {
+        let start: Date?
+        let end: Date?
+    }
+
+    let id: String
+    let header: String
+    let description: String?
+    let url: String?
+    /// GTFS-Realtime enum names, e.g. "CONSTRUCTION" and "SIGNIFICANT_DELAYS".
+    let cause: String?
+    let effect: String?
+    /// Empty means always in force; a nil bound is open-ended.
+    let periods: [Period]
+    let trains: [String]
+    let stations: [String]
+    let lines: [String]
+
+    func isActive(at now: Date) -> Bool {
+        periods.isEmpty || periods.contains { period in
+            (period.start.map { $0 <= now } ?? true) && (period.end.map { now < $0 } ?? true)
+        }
+    }
+
+    /// A train named by a no-service alert isn't running, whatever the timetable says.
+    var cancelsTrains: Bool { effect == "NO_SERVICE" && !trains.isEmpty }
+
+    /// Plain words for the effect; nil for the catch-alls not worth a label.
+    var effectLabel: String? {
+        switch effect {
+        case "NO_SERVICE": "No service"
+        case "REDUCED_SERVICE": "Reduced service"
+        case "SIGNIFICANT_DELAYS": "Delays"
+        case "DETOUR": "Detour"
+        case "ADDITIONAL_SERVICE": "Extra service"
+        case "MODIFIED_SERVICE": "Modified service"
+        case "STOP_MOVED": "Stop moved"
+        case "ACCESSIBILITY_ISSUE": "Accessibility"
+        default: nil
+        }
+    }
+
+    func mentions(station: String) -> Bool {
+        stations.contains { $0.caseInsensitiveCompare(station) == .orderedSame }
+    }
 }
 
 /// One train in service: its remaining stops, soonest first. Stops it has already made are
@@ -107,11 +160,25 @@ final class CaltrainLiveService: ObservableObject {
         return train
     }
 
+    /// Alerts in force right now. Unlike predictions these don't go stale with the
+    /// snapshot: an alert carries its own end time.
+    func activeAlerts(at now: Date = Date()) -> [LiveAlert] {
+        (feed?.alerts ?? []).filter { $0.isActive(at: now) }
+    }
+
+    func isCancelled(_ trainNumber: String, at now: Date = Date()) -> Bool {
+        activeAlerts(at: now).contains { $0.cancelsTrains && $0.trains.contains(trainNumber) }
+    }
+
     private func refresh() async {
         do {
             let (data, response) = try await URLSession.shared.data(from: Self.endpoint)
             guard (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-            feed = try Self.decoder.decode(LiveFeed.self, from: data)
+            let feed = try Self.decoder.decode(LiveFeed.self, from: data)
+            if let holidays = feed.holidays {
+                CaltrainService.setHolidays(Set(holidays))
+            }
+            self.feed = feed
         } catch {
             // Keep the last snapshot; `maxAge` retires it if the outage lasts.
         }

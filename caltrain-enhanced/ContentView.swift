@@ -166,6 +166,7 @@ struct ContentView: View {
     @State private var travelTimes: TravelTimes?
     @State private var now = Date()
     @State private var showSettings = false
+    @State private var showAlerts = false
     @State private var isEditingStation = false
     @State private var stationQuery = ""
     @State private var stationQueryEdited = false
@@ -186,6 +187,11 @@ struct ContentView: View {
                                        nearestName: location.nearestStation?.name,
                                        onSelect: select)
                         .transition(.unrollDown)
+                }
+
+                let alerts = sortedAlerts(live.activeAlerts(at: now), for: location.activeStation?.name)
+                if !alerts.isEmpty && !isEditingStation {
+                    AlertBanner(alerts: alerts) { showAlerts = true }
                 }
 
                 if let station = location.activeStation {
@@ -221,6 +227,9 @@ struct ContentView: View {
         .background(Color(.systemGroupedBackground))
         .sheet(isPresented: $showSettings) {
             SettingsView()
+        }
+        .sheet(isPresented: $showAlerts) {
+            AlertsSheet(stationName: location.activeStation?.name)
         }
         // The sheet edits `direction` through a binding, so flipping the timetable also
         // flips the board behind it.
@@ -291,6 +300,8 @@ struct ContentView: View {
                     .tint(Color.caltrainRed)
                     .padding(.top, 6)
             } else {
+                AlertsButton(count: live.activeAlerts(at: now).count) { showAlerts = true }
+
                 Button {
                     showSettings = true
                 } label: {
@@ -462,6 +473,7 @@ struct ContentView: View {
     /// train stays on the board past its printed time, and one that's gone drops off.
     private func board(_ trains: [NextTrainInfo], northbound: Bool, at date: Date) -> [NextTrainInfo] {
         let departures = trains.compactMap { train -> NextTrainInfo? in
+            guard !live.isCancelled(train.trainNumber, at: date) else { return nil }
             let expected = live.train(train.trainNumber, northbound: northbound, at: date)?
                 .stop(named: train.stationName)?.expected
             let when = expected ?? train.arrivalDate
@@ -962,6 +974,11 @@ private struct TimetableSheet: View {
         return live.train(train.trainNumber, northbound: direction.isNorth)
     }
 
+    /// Named by a no-service alert today.
+    private func isCancelled(_ train: TimetableTrain) -> Bool {
+        serviceDay == CaltrainService.currentServiceDay() && live.isCancelled(train.trainNumber)
+    }
+
     /// Dimmed once it's left here, unless 511 says it's still on its way.
     private func isGone(_ train: TimetableTrain, live liveTrain: LiveTrain?) -> Bool {
         train.hasDeparted && liveTrain?.stop(named: stationName)?.expected == nil
@@ -1065,6 +1082,7 @@ private struct TimetableSheet: View {
             HStack(spacing: 0) {
                 ForEach(grid.trains) { train in
                     let liveTrain = liveTrain(train)
+                    let cancelled = isCancelled(train)
                     VStack(spacing: 5) {
                         TrainTypeBadge(trainClass: TrainClass(train.trainType))
                         HStack(spacing: 3) {
@@ -1075,11 +1093,13 @@ private struct TimetableSheet: View {
                             Text("#\(train.trainNumber)")
                                 .font(.system(size: 15, weight: .semibold, design: .rounded))
                                 .monospacedDigit()
+                                .strikethrough(cancelled)
                         }
                         .foregroundStyle(liveTrain != nil ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.secondary))
                     }
                     .frame(width: trainWidth)
-                    .opacity(isGone(train, live: liveTrain) ? departedOpacity : 1)
+                    .opacity(isGone(train, live: liveTrain) || cancelled ? departedOpacity : 1)
+                    .accessibilityLabel(cancelled ? "Train \(train.trainNumber), cancelled" : "Train \(train.trainNumber)")
                 }
             }
             .offset(x: -scrollX)
@@ -1121,7 +1141,7 @@ private struct TimetableSheet: View {
         HStack(spacing: 0) {
             ForEach(grid.trains) { train in
                 let liveTrain = liveTrain(train)
-                let gone = isGone(train, live: liveTrain)
+                let gone = isGone(train, live: liveTrain) || isCancelled(train)
                 VStack(spacing: 0) {
                     ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
                         let isCurrent = isCurrentStation(station)

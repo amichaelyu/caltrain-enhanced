@@ -285,7 +285,34 @@ final class CaltrainService {
     /// Which schedule is running right now — before ~3am we are still on the previous
     /// operating day, so a 1am Saturday train runs on Friday's weekday schedule.
     static func currentServiceDay(for date: Date = Date()) -> ServiceDay {
-        Calendar.current.isDateInWeekend(operatingDay(for: date)) ? .weekend : .weekday
+        runsWeekendSchedule(operatingDay(for: date)) ? .weekend : .weekday
+    }
+
+    // MARK: Holidays
+
+    /// Caltrain runs its weekend timetable on holidays. The dates come from the live feed
+    /// and are kept across launches, so a holiday still reads right offline.
+    private static let holidaysKey = "caltrainHolidays"
+    private(set) static var holidays = Set(UserDefaults.standard.stringArray(forKey: holidaysKey) ?? [])
+
+    static func setHolidays(_ dates: Set<String>) {
+        guard dates != holidays else { return }
+        holidays = dates
+        UserDefaults.standard.set(dates.sorted(), forKey: holidaysKey)
+    }
+
+    /// The feed's dates are Pacific calendar days, whatever zone the phone is in.
+    private static let holidayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private static func runsWeekendSchedule(_ operatingDay: Date) -> Bool {
+        Calendar.current.isDateInWeekend(operatingDay)
+            || holidays.contains(holidayFormatter.string(from: operatingDay))
     }
 
     /// Stop times before this hour physically occur the day *after* their operating day.
@@ -330,7 +357,7 @@ final class CaltrainService {
                 ? calendar.date(byAdding: .day, value: -1, to: physicalDay) ?? physicalDay
                 : physicalDay
             guard calendar.isDate(operatingDay, inSameDayAs: currentOperatingDay) else { continue }
-            guard calendar.isDateInWeekend(operatingDay) == wantsWeekend else { continue }
+            guard Self.runsWeekendSchedule(operatingDay) == wantsWeekend else { continue }
 
             var comps = calendar.dateComponents([.year, .month, .day], from: physicalDay)
             comps.hour = hour
