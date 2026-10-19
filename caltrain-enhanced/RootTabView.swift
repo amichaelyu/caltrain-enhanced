@@ -11,7 +11,7 @@ import SwiftUI
 
 struct RootTabView: View {
     private enum Tab {
-        case plan, ride
+        case plan, map, ride
     }
 
     @StateObject private var ride = RideSession()
@@ -25,6 +25,10 @@ struct RootTabView: View {
             ContentView(direction: $direction, onStartRide: startRide)
                 .tabItem { Label("Plan", systemImage: "calendar") }
                 .tag(Tab.plan)
+
+            TrainMapView()
+                .tabItem { Label("Map", systemImage: "map") }
+                .tag(Tab.map)
 
             RideView(direction: $direction)
                 .tabItem { Label("Ride", systemImage: "tram.fill") }

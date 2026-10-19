@@ -72,9 +72,13 @@ final class CaltrainLiveService: ObservableObject {
     @Published private(set) var feed: LiveFeed?
 
     private var pollTask: Task<Void, Never>?
+    /// Every screen that wants the feed right now. Polling runs while any of them do, so
+    /// one tab disappearing can't switch it off under another that just appeared.
+    private var clients: Set<String> = []
 
-    /// Polls until `stop()`. Safe to call repeatedly.
-    func start() {
+    /// Polls until every client has called `stop(for:)`. Safe to call repeatedly.
+    func start(for client: String) {
+        clients.insert(client)
         guard pollTask == nil else { return }
         pollTask = Task { [weak self] in
             while !Task.isCancelled {
@@ -84,7 +88,9 @@ final class CaltrainLiveService: ObservableObject {
         }
     }
 
-    func stop() {
+    func stop(for client: String) {
+        clients.remove(client)
+        guard clients.isEmpty else { return }
         pollTask?.cancel()
         pollTask = nil
     }

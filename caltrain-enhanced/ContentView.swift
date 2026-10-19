@@ -157,8 +157,10 @@ struct ContentView: View {
     var onStartRide: (String, String) -> Void = { _, _ in }
 
     @ObservedObject private var location = SharedLocationManager.shared
+    @ObservedObject private var live = CaltrainLiveService.shared
     @Environment(\.scenePhase) private var scenePhase
 
+    @State private var isVisible = false
     @State private var northbound: [NextTrainInfo] = []
     @State private var southbound: [NextTrainInfo] = []
     @State private var travelTimes: TravelTimes?
@@ -190,6 +192,8 @@ struct ContentView: View {
                     ZStack {
                         DepartureBoard(direction: direction,
                                        trains: direction.isNorth ? northbound : southbound,
+                                       nextFix: nextFix,
+                                       stationName: station.name,
                                        onToggle: flipDirection,
                                        onOpenTimetable: { showTimetable = true },
                                        onChooseDestination: chooseDestination)
@@ -243,7 +247,11 @@ struct ContentView: View {
             } else {
                 location.stopTracking()
             }
+            updateLiveFeed()
         }
+        .onAppear { isVisible = true; updateLiveFeed() }
+        .onDisappear { isVisible = false; updateLiveFeed() }
+        .onReceive(live.$feed) { _ in refreshTrains() }
         .onReceive(ticker) { date in
             guard scenePhase == .active else { return }
             now = date
@@ -438,11 +446,59 @@ struct ContentView: View {
                                                 northbound: direction.isNorth)
     }
 
+    /// How far back to look for a train whose printed time has passed but which 511 says
+    /// hasn't left yet.
+    private static let lateWindow: TimeInterval = 30 * 60
+
     private func refreshTrains() {
         guard let station = location.activeStation else { return }
-        let upcoming = CaltrainService.shared.upcomingTrains(from: station.name, currentTime: Date())
-        northbound = upcoming.northbound
-        southbound = upcoming.southbound
+        let date = Date()
+        let upcoming = CaltrainService.shared.upcomingTrains(from: station.name,
+                                                             currentTime: date.addingTimeInterval(-Self.lateWindow),
+                                                             limit: 16)
+        northbound = board(upcoming.northbound, northbound: true, at: date)
+        southbound = board(upcoming.southbound, northbound: false, at: date)
+    }
+
+    /// Puts 511's prediction on each departure and keeps the ones still to leave: a late
+    /// train stays on the board past its printed time, and one that's gone drops off.
+    private func board(_ trains: [NextTrainInfo], northbound: Bool, at date: Date) -> [NextTrainInfo] {
+        let departures = trains.compactMap { train -> NextTrainInfo? in
+            let expected = live.train(train.trainNumber, northbound: northbound, at: date)?
+                .stop(named: train.stationName)?.expected
+            let when = expected ?? train.arrivalDate
+            guard when > date else { return nil }
+            return NextTrainInfo(trainNumber: train.trainNumber,
+                                 trainType: train.trainType,
+                                 stationName: train.stationName,
+                                 minutesUntilArrival: max(0, Int(when.timeIntervalSince(date) / 60)),
+                                 arrivalTime: train.arrivalTime,
+                                 arrivalDate: train.arrivalDate,
+                                 direction: train.direction,
+                                 expectedDate: expected)
+        }
+        return Array(departures.sorted { $0.departureDate < $1.departureDate }.prefix(8))
+    }
+
+    /// Where the next train on the board is right now, if it's out on the line.
+    private var nextFix: TrainFix? {
+        guard let train = (direction.isNorth ? northbound : southbound).first,
+              let run = CaltrainService.shared.run(trainNumber: train.trainNumber,
+                                                   northbound: direction.isNorth,
+                                                   at: now)
+        else { return nil }
+        return TrainFix(run: run,
+                        live: live.train(train.trainNumber, northbound: direction.isNorth, at: now),
+                        now: now)
+    }
+
+    /// Only poll while the board is on screen.
+    private func updateLiveFeed() {
+        if scenePhase == .active && isVisible {
+            live.start(for: "plan")
+        } else {
+            live.stop(for: "plan")
+        }
     }
 
     /// Identity for the travel-time fetch: the station plus the published origin. Rounded
@@ -470,6 +526,8 @@ struct ContentView: View {
 private struct DepartureBoard: View {
     let direction: TimetableDirection
     let trains: [NextTrainInfo]
+    let nextFix: TrainFix?
+    let stationName: String
     let onToggle: () -> Void
     let onOpenTimetable: () -> Void
     let onChooseDestination: (String) -> Void
@@ -483,7 +541,7 @@ private struct DepartureBoard: View {
             directionToggle
 
             Button { if let next { onChooseDestination(next.trainNumber) } } label: {
-                DepartureRow(direction: direction, train: next)
+                DepartureRow(direction: direction, train: next, fix: nextFix, stationName: stationName)
             }
             .buttonStyle(.plain)
             .disabled(next == nil)
@@ -554,11 +612,7 @@ private struct DepartureBoard: View {
                 HStack(spacing: 8) {
                     TrainTypeDot(trainClass: TrainClass(train.trainType))
 
-                    Text(train.arrivalTime)
-                        .font(.system(size: 16, weight: .medium, design: .rounded))
-                        .monospacedDigit()
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                    DepartureClock(train: train, size: 16)
 
                     Text("#\(train.trainNumber)")
                         .font(.caption)
@@ -627,9 +681,43 @@ private struct DepartureBoard: View {
     }
 }
 
+/// A departure's time. When 511 has it leaving in a different minute, its time leads in
+/// red with the printed one struck through beside it.
+private struct DepartureClock: View {
+    let train: NextTrainInfo
+    let size: CGFloat
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 4) {
+            if let expected = train.expectedDate, train.isOffSchedule {
+                Text(RideFormat.clock(expected))
+                    .font(.system(size: size, weight: .semibold, design: .rounded))
+                    .foregroundStyle(Color.caltrainRed)
+                Text(train.arrivalTime)
+                    .font(.system(size: size * 0.8, design: .rounded))
+                    .strikethrough()
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text(train.arrivalTime)
+                    .font(.system(size: size, weight: size > 14 ? .medium : .regular, design: .rounded))
+                    .foregroundStyle(size > 14 ? .primary : .secondary)
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(train.isOffSchedule
+                            ? "\(RideFormat.clock(train.departureDate)), scheduled \(train.arrivalTime)"
+                            : train.arrivalTime)
+    }
+}
+
 private struct DepartureRow: View {
     let direction: TimetableDirection
     let train: NextTrainInfo?
+    let fix: TrainFix?
+    let stationName: String
 
     var body: some View {
         HStack(alignment: .center, spacing: 16) {
@@ -639,11 +727,13 @@ private struct DepartureRow: View {
 
                 if let train {
                     HStack(spacing: 7) {
-                        Text("\(train.arrivalTime) · #\(train.trainNumber)")
+                        DepartureClock(train: train, size: 13)
+                        Text("· #\(train.trainNumber)")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                         TrainTypeBadge(trainClass: TrainClass(train.trainType))
                     }
+                    whereabouts
                 } else {
                     Text("No more trains today")
                         .font(.footnote)
@@ -658,6 +748,23 @@ private struct DepartureRow: View {
         .padding(.horizontal, 20)
         .padding(.top, 4)
         .padding(.bottom, 18)
+    }
+
+    /// Where the train is now: "Between Hillsdale and Belmont · 3 stops away". Nothing
+    /// before it's left its origin, or once it's here.
+    @ViewBuilder private var whereabouts: some View {
+        if let fix, let away = fix.stopsAway(from: stationName) {
+            HStack(spacing: 4) {
+                Image(systemName: fix.isLive ? "dot.radiowaves.left.and.right" : "clock")
+                    .font(.system(size: 9, weight: .bold))
+                Text("\(fix.whereabouts) · \(away == 1 ? "next stop" : "\(away) stops away")")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+            .font(.caption)
+            .foregroundStyle(fix.isLive ? Color.caltrainRed : .secondary)
+            .accessibilityLabel("\(fix.whereabouts), \(away == 1 ? "next stop is this one" : "\(away) stops away"), \(fix.isLive ? "live from 511.org" : "from the timetable")")
+        }
     }
 
     @ViewBuilder private var countdown: some View {

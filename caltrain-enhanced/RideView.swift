@@ -157,9 +157,9 @@ struct RideView: View {
     /// Only poll while there's a ride on screen to put the predictions on.
     private func updateLiveFeed() {
         if scenePhase == .active && ride.isActive {
-            live.start()
+            live.start(for: "ride")
         } else {
-            live.stop()
+            live.stop(for: "ride")
         }
     }
 

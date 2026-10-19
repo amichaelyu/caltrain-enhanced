@@ -78,6 +78,18 @@ struct NextTrainInfo: Identifiable {
     let arrivalTime: String        // display formatted, e.g. "5:07 AM"
     let arrivalDate: Date
     let direction: String
+    /// 511's prediction for this stop, when the feed is tracking the train.
+    var expectedDate: Date? = nil
+
+    /// The time to count down to: 511's when there is one, the timetable's otherwise.
+    var departureDate: Date { expectedDate ?? arrivalDate }
+
+    /// True when 511 puts it in a different minute from the printed time.
+    var isOffSchedule: Bool {
+        guard let expectedDate else { return false }
+        let minute = { (date: Date) in Int((date.timeIntervalSinceReferenceDate / 60).rounded(.down)) }
+        return minute(expectedDate) != minute(arrivalDate)
+    }
 }
 
 /// Which timetable is in force. Caltrain runs one schedule Monday–Friday and another
@@ -396,39 +408,84 @@ extension CaltrainService {
                    northbound: Bool,
                    boardingAt stationName: String,
                    at date: Date = Date()) -> RideItinerary? {
+        run(trainNumber: trainNumber, northbound: northbound, from: stationName, at: date)
+    }
 
+    /// A train's whole run, origin to terminus.
+    func run(trainNumber: String, northbound: Bool, at date: Date = Date()) -> RideItinerary? {
+        run(trainNumber: trainNumber, northbound: northbound, from: nil, at: date)
+    }
+
+    /// Every run on the current timetable that could be out on the line at `date`: past
+    /// its printed departure, and not more than `slack` past its printed arrival, so a
+    /// late train isn't dropped the minute it should have finished.
+    func runs(at date: Date = Date(), slack: TimeInterval = 30 * 60) -> [RideItinerary] {
+        let serviceDay = Self.currentServiceDay(for: date)
+        var out: [RideItinerary] = []
+        for schedule in schedules
+        where schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == serviceDay.isWeekend {
+            let northbound = schedule.direction.localizedCaseInsensitiveContains("North")
+            for train in schedule.trains {
+                guard let run = Self.run(of: train, northbound: northbound, from: nil, at: date),
+                      let origin = run.origin, let terminus = run.terminus,
+                      origin.scheduled <= date,
+                      date <= terminus.scheduled.addingTimeInterval(slack)
+                else { continue }
+                out.append(run)
+            }
+        }
+        return out
+    }
+
+    /// `stationName` nil starts the run at the train's origin.
+    private func run(trainNumber: String,
+                     northbound: Bool,
+                     from stationName: String?,
+                     at date: Date) -> RideItinerary? {
         let serviceDay = Self.currentServiceDay(for: date)
 
         for schedule in schedules {
             guard schedule.serviceType.localizedCaseInsensitiveContains("WEEKEND") == serviceDay.isWeekend,
-                  schedule.direction.localizedCaseInsensitiveContains("North") == northbound
+                  schedule.direction.localizedCaseInsensitiveContains("North") == northbound,
+                  let train = schedule.trains.first(where: { $0.trainNo == trainNumber }),
+                  let run = Self.run(of: train, northbound: northbound, from: stationName, at: date)
             else { continue }
-
-            guard let train = schedule.trains.first(where: { $0.trainNo == trainNumber }),
-                  train.stops[stationName] != nil
-            else { continue }
-
-            // The canonical list runs north to south, so southbound reads as-is.
-            let allNames = CaltrainStations.shared.stations.map(\.name)
-            let ordered = northbound ? allNames.reversed().map { $0 } : allNames
-            guard let start = ordered.firstIndex(where: { $0.caseInsensitiveCompare(stationName) == .orderedSame })
-            else { continue }
-
-            let stops: [RideStop] = ordered[start...].compactMap { name in
-                guard let timeStr = train.stops[name],
-                      let station = CaltrainStations.shared.station(named: name),
-                      let when = Self.absoluteDate(forStopTime: timeStr, operatingDayContaining: date)
-                else { return nil }
-                return RideStop(station: station, scheduled: when)
-            }
-
-            guard !stops.isEmpty else { continue }
-            return RideItinerary(trainNumber: train.trainNo,
-                                 trainType: train.type,
-                                 northbound: northbound,
-                                 stops: stops)
+            return run
         }
 
         return nil
+    }
+
+    private static func run(of train: Train,
+                            northbound: Bool,
+                            from stationName: String?,
+                            at date: Date) -> RideItinerary? {
+        if let stationName, train.stops[stationName] == nil { return nil }
+
+        // The canonical list runs north to south, so southbound reads as-is.
+        let allNames = CaltrainStations.shared.stations.map(\.name)
+        let ordered = northbound ? allNames.reversed().map { $0 } : allNames
+        let start: Int
+        if let stationName {
+            guard let index = ordered.firstIndex(where: { $0.caseInsensitiveCompare(stationName) == .orderedSame })
+            else { return nil }
+            start = index
+        } else {
+            start = 0
+        }
+
+        let stops: [RideStop] = ordered[start...].compactMap { name in
+            guard let timeStr = train.stops[name],
+                  let station = CaltrainStations.shared.station(named: name),
+                  let when = absoluteDate(forStopTime: timeStr, operatingDayContaining: date)
+            else { return nil }
+            return RideStop(station: station, scheduled: when)
+        }
+
+        guard !stops.isEmpty else { return nil }
+        return RideItinerary(trainNumber: train.trainNo,
+                             trainType: train.type,
+                             northbound: northbound,
+                             stops: stops)
     }
 }
