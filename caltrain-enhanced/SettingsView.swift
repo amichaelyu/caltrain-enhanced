@@ -36,6 +36,22 @@ struct SettingsView: View {
                     }
                 }
 
+                Section {
+                    keyRow(description: "Live estimate from 511.org for a train it's tracking.") {
+                        sampleTime("7:42", style: Color.caltrainRed, bold: true)
+                    }
+                    keyRow(description: "Printed timetable, no live data for this train.") {
+                        sampleTime("7:38", style: Color.primary)
+                    }
+                    keyRow(description: "Printed time, shown when the estimate differs from it.") {
+                        sampleTime("7:38", style: Color.secondary, struck: true)
+                    }
+                } header: {
+                    Text("Times")
+                } footer: {
+                    Text("Live data provided by 511.org.")
+                }
+
                 Section("Location") {
                     LabeledContent("Permission", value: Self.permissionLabel(location.authorizationStatus))
 
@@ -87,6 +103,15 @@ struct SettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 3)
+    }
+
+    private func sampleTime(_ time: String, style: Color, bold: Bool = false, struck: Bool = false) -> some View {
+        Text(time)
+            .font(.system(size: 16, weight: bold ? .semibold : .regular, design: .rounded))
+            .monospacedDigit()
+            .strikethrough(struck)
+            .foregroundStyle(style)
+            .accessibilityHidden(true)
     }
 
     /// Wide enough for the longest badge ("S. COUNTY") so none of them get clamped.

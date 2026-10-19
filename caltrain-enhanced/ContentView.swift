@@ -902,11 +902,41 @@ private struct TravelTile: View {
 
 /// Stations down, trains across — a printed-timetable view of the upcoming trains from
 /// the current station, opened by tapping a direction.
+/// One time in the timetable. Black from the printed schedule; red for a train 511 is
+/// tracking, showing 511's estimate with the printed time struck through under it when the
+/// two differ.
+private struct TimetableCell: View {
+    let scheduled: String?
+    let expected: Date?
+    let isLive: Bool
+    let isCurrent: Bool
+
+    var body: some View {
+        let estimate = expected.map(RideFormat.clock)
+        VStack(spacing: 0) {
+            Text(estimate ?? scheduled ?? "—")
+                .font(.system(size: 17, weight: isCurrent || isLive ? .semibold : .regular, design: .rounded))
+                .foregroundStyle(scheduled == nil ? AnyShapeStyle(.tertiary)
+                                 : isLive ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.primary))
+            if let estimate, let scheduled, estimate != scheduled {
+                Text(scheduled)
+                    .font(.system(size: 11, design: .rounded))
+                    .strikethrough()
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .monospacedDigit()
+        .lineLimit(1)
+        .minimumScaleFactor(0.7)
+    }
+}
+
 private struct TimetableSheet: View {
     let stationName: String
     let onStartRide: (String, String) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var live = CaltrainLiveService.shared
 
     @Binding var direction: TimetableDirection
     @State private var serviceDay: ServiceDay
@@ -957,6 +987,20 @@ private struct TimetableSheet: View {
                 }
             }
         }
+        .onAppear { live.start(for: "timetable") }
+        .onDisappear { live.stop(for: "timetable") }
+    }
+
+    /// 511's run for a column, when it's tracking that train today. The other day's
+    /// schedule never has one.
+    private func liveTrain(_ train: TimetableTrain) -> LiveTrain? {
+        guard serviceDay == CaltrainService.currentServiceDay() else { return nil }
+        return live.train(train.trainNumber, northbound: direction.isNorth)
+    }
+
+    /// Dimmed once it's left here, unless 511 says it's still on its way.
+    private func isGone(_ train: TimetableTrain, live liveTrain: LiveTrain?) -> Bool {
+        train.hasDeparted && liveTrain?.stop(named: stationName)?.expected == nil
     }
 
     private var controlBar: some View {
@@ -1056,15 +1100,22 @@ private struct TimetableSheet: View {
 
             HStack(spacing: 0) {
                 ForEach(grid.trains) { train in
+                    let liveTrain = liveTrain(train)
                     VStack(spacing: 5) {
                         TrainTypeBadge(trainClass: TrainClass(train.trainType))
-                        Text("#\(train.trainNumber)")
-                            .font(.system(size: 15, weight: .semibold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 3) {
+                            if liveTrain != nil {
+                                Image(systemName: "dot.radiowaves.left.and.right")
+                                    .font(.system(size: 9, weight: .bold))
+                            }
+                            Text("#\(train.trainNumber)")
+                                .font(.system(size: 15, weight: .semibold, design: .rounded))
+                                .monospacedDigit()
+                        }
+                        .foregroundStyle(liveTrain != nil ? AnyShapeStyle(Color.caltrainRed) : AnyShapeStyle(.secondary))
                     }
                     .frame(width: trainWidth)
-                    .opacity(train.hasDeparted ? departedOpacity : 1)
+                    .opacity(isGone(train, live: liveTrain) ? departedOpacity : 1)
                 }
             }
             .offset(x: -scrollX)
@@ -1105,29 +1156,30 @@ private struct TimetableSheet: View {
     private func trainColumns(trainWidth: CGFloat) -> some View {
         HStack(spacing: 0) {
             ForEach(grid.trains) { train in
+                let liveTrain = liveTrain(train)
+                let gone = isGone(train, live: liveTrain)
                 VStack(spacing: 0) {
                     ForEach(Array(grid.stations.enumerated()), id: \.element) { index, station in
                         let isCurrent = isCurrentStation(station)
+                        let expected = liveTrain?.stop(named: station)?.expected
                         // A cell names a train and a station, which is exactly a ride:
                         // this train, off at that stop.
                         Button {
                             onStartRide(train.trainNumber, station)
                             dismiss()
                         } label: {
-                            Text(train.times[station] ?? "—")
-                                .font(.system(size: 17, weight: isCurrent ? .semibold : .regular, design: .rounded))
-                                .monospacedDigit()
-                                .foregroundStyle(train.times[station] == nil ? .tertiary : .primary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .opacity(train.hasDeparted ? departedOpacity : 1)
+                            TimetableCell(scheduled: train.times[station],
+                                          expected: expected,
+                                          isLive: liveTrain != nil,
+                                          isCurrent: isCurrent)
+                                .opacity(gone ? departedOpacity : 1)
                                 .frame(width: trainWidth, height: rowHeight)
                                 .background(rowBackground(isCurrent: isCurrent, index: index))
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled(train.times[station] == nil)
-                        .accessibilityLabel("\(station), \(train.times[station] ?? "no service"), train \(train.trainNumber)")
+                        .accessibilityLabel("\(station), \(expected.map { "expected \(RideFormat.clock($0)), scheduled " } ?? "")\(train.times[station] ?? "no service"), train \(train.trainNumber)")
                         .accessibilityHint("Ride this train and get off here")
                     }
                 }
