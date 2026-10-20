@@ -176,8 +176,8 @@ struct TrainSheet: View {
                         .font(.system(size: 20, weight: .bold, design: .rounded))
                     if let destination {
                         Text(destination.hasPassed
-                             ? "Arrived \(RideFormat.clock(destination.projected))"
-                             : "Arrives \(RideFormat.clock(destination.projected))")
+                             ? "Arrived \(RideFormat.clock(destination.arrival))"
+                             : "Arrives \(RideFormat.clock(destination.arrival))")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }

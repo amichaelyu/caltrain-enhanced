@@ -72,8 +72,11 @@ struct RidePosition {
 struct RideStopEstimate: Identifiable {
     let station: CaltrainStation
     let scheduled: Date
-    /// `scheduled` shifted by however late the train is running.
+    /// When the train leaves: `scheduled` shifted by however late the train is running.
     let projected: Date
+    /// When it pulls in. 511's own figure when it gives one; otherwise a dwell before
+    /// `projected`, as the timetable has one time per stop.
+    let arrival: Date
     /// Scheduled minutes from the previous stop: the delta this whole page is built on.
     let minutesFromPrevious: Int?
     /// Scheduled minutes since leaving the boarding station.
@@ -84,6 +87,17 @@ struct RideStopEstimate: Identifiable {
 
     func minutesAway(from now: Date) -> Int {
         max(0, Int((projected.timeIntervalSince(now) / 60).rounded()))
+    }
+
+    /// How long a train stands at a platform when all we have is when it leaves.
+    private static let dwell: TimeInterval = 45
+
+    /// When a train pulls in given only its departure: a dwell before it, but never more
+    /// than a third of a short leg from the stop before, so the train still visibly moves.
+    static func pullIn(before departure: Date, after previous: Date?) -> Date {
+        guard let previous else { return departure }
+        let leg = max(departure.timeIntervalSince(previous), 0)
+        return departure.addingTimeInterval(-min(dwell, leg / 3))
     }
 }
 
@@ -162,6 +176,7 @@ enum RideEstimator {
                 station: stop.station,
                 scheduled: stop.scheduled,
                 projected: projected,
+                arrival: RideStopEstimate.pullIn(before: projected, after: stops.last?.projected),
                 minutesFromPrevious: previous.map { minutes(from: $0, to: stop.scheduled) },
                 minutesFromOrigin: originScheduled.map { minutes(from: $0, to: stop.scheduled) } ?? 0,
                 hasPassed: projected <= now || passedByPosition || atOrBeyond
@@ -215,12 +230,16 @@ enum RideEstimator {
         var estimates: [RideStopEstimate] = []
 
         for (index, stop) in stops.enumerated() {
-            let projected = live.stop(named: stop.station.name)?.expected
-                ?? stop.scheduled.addingTimeInterval(delay)
+            let call = live.stop(named: stop.station.name)
+            let projected = call?.expected ?? stop.scheduled.addingTimeInterval(delay)
+            // 511 predicts the arrival too; it can't sensibly be after the departure.
+            let arrival = call?.arrival.map { min($0, projected) }
+                ?? RideStopEstimate.pullIn(before: projected, after: estimates.last?.projected)
             estimates.append(RideStopEstimate(
                 station: stop.station,
                 scheduled: stop.scheduled,
                 projected: projected,
+                arrival: arrival,
                 minutesFromPrevious: previous.map { minutes(from: $0, to: stop.scheduled) },
                 minutesFromOrigin: originScheduled.map { minutes(from: $0, to: stop.scheduled) } ?? 0,
                 hasPassed: index < next || projected <= now
@@ -401,19 +420,12 @@ extension RideEstimate {
         return placement.fraction >= Self.pulledIn ? placement.segmentIndex + 1 : placement.segmentIndex
     }
 
-    /// How long a train stands at a platform. The timetable and 511 give one time per
-    /// stop, and it's when the train leaves; it pulls in about this much earlier.
-    private static let dwell: TimeInterval = 45
-
     private static let minimumPullIn: TimeInterval = 30
 
-    /// When the train pulls into the stop after `index`: a dwell before its listed time,
-    /// but never more than a third of a short leg, so the train still visibly moves.
+    /// When the train pulls into the stop after `index`, and stands there until that
+    /// stop's `projected` departure.
     private func arrivalTime(atStopAfter index: Int) -> Date {
-        let departure = stops[index].projected
-        let next = stops[index + 1].projected
-        let leg = max(next.timeIntervalSince(departure), 0)
-        return next.addingTimeInterval(-min(Self.dwell, leg / 3))
+        stops[index + 1].arrival
     }
 
     /// A fix says where the train was when it was taken, and 511's can be a minute or two

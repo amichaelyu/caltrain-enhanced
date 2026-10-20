@@ -102,8 +102,10 @@ struct LiveTrain: Decodable {
 struct LiveStop: Decodable {
     /// Already spelled the way `CaltrainStations` spells it.
     let station: String
-    /// Nil until the train is tracked, e.g. before it leaves its origin.
+    /// Predicted departure. Nil until the train is tracked, e.g. before it leaves its origin.
     let expected: Date?
+    /// Predicted arrival, usually a minute before `expected`. Nil when 511 doesn't give one.
+    let arrival: Date?
 }
 
 // MARK: - Service
