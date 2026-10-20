@@ -484,6 +484,8 @@ private struct MapTrainPuck: View {
                 .frame(width: 8, height: 8)
                 .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 1.5))
         }
+        // Anchored by the foot, so drop half the dot to centre it on the rails.
+        .offset(y: 4)
         .shadow(radius: 2, y: 1)
     }
 
