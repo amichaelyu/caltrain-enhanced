@@ -4,7 +4,7 @@
 //
 //  Live predictions for every Caltrain on the line, from 511.org by way of
 //  www.yumichael.com/api/caltrain. The app never calls 511 itself: its key is rate-limited
-//  per key, not per device, so the site's worker fetches once a minute for everyone and
+//  per key, not per device, so the site's worker fetches every 20s for everyone and
 //  this just reads the result. Data provided by 511.org.
 //
 
@@ -114,8 +114,8 @@ final class CaltrainLiveService: ObservableObject {
 
     private static let endpoint = URL(string: "https://www.yumichael.com/api/caltrain")!
 
-    /// The worker refreshes once a minute, so polling faster just re-reads its cache.
-    private static let pollInterval: Duration = .seconds(60)
+    /// The worker refreshes trips every 20s, so polling faster just re-reads its cache.
+    private static let pollInterval: Duration = .seconds(20)
 
     /// Past this a snapshot is history, not a prediction, and the ride page goes back to
     /// the timetable rather than trusting it.
