@@ -127,7 +127,10 @@ struct TrainMapView: View {
                 .stroke(Color.primary.opacity(0.22),
                         style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round))
 
-            ForEach(CaltrainStations.shared.stations, id: \.name) { station in
+            // Keyed by position, not name: a String id tags each station with its name,
+            // which made stations selectable and opened a blank train sheet.
+            ForEach(CaltrainStations.shared.stations.indices, id: \.self) { index in
+                let station = CaltrainStations.shared.stations[index]
                 Annotation(station.name, coordinate: station.coordinate, anchor: .center) {
                     Circle()
                         .fill(Color(.systemBackground))
