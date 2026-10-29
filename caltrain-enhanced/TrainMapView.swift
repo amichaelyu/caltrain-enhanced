@@ -21,6 +21,9 @@ struct TrainMapView: View {
 
     @State private var isVisible = false
     @State private var selectedID: String?
+    /// The train the sheet shows. It outlives `selectedID` so the sheet keeps its
+    /// content and detents while it slides away; emptied, it jumped to full height blank.
+    @State private var sheetTrain: TrainRef?
     @State private var detent: PresentationDetent = TrainMapView.collapsedDetent
     @State private var camera: MapCameraPosition = .rect(TrainMapView.corridorRect)
 
@@ -78,7 +81,7 @@ struct TrainMapView: View {
         }
         // Drag it up for every stop; the map stays live behind it at the smaller sizes.
         .sheet(isPresented: Binding(get: { selectedID != nil }, set: { if !$0 { selectedID = nil } })) {
-            if let train = selectedID.flatMap(TrainRef.init(id:)) {
+            if let train = sheetTrain {
                 TrainSheet(train: train) { origin, destination in
                     ride.start(trainNumber: train.trainNumber, from: origin,
                                northbound: train.northbound, destinationName: destination)
@@ -88,6 +91,9 @@ struct TrainMapView: View {
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
                 .presentationContentInteraction(.scrolls)
             }
+        }
+        .onChange(of: selectedID, initial: true) { _, id in
+            if let train = id.flatMap(TrainRef.init(id:)) { sheetTrain = train }
         }
         .onChange(of: rideKey, initial: true) { _, _ in startTrip() }
         .onChange(of: ride.destinationName) { _, _ in trip = makeTrip() }
