@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#EC2A47"/>
+      <stop offset="1" stop-color="#C8122E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#bg)"/>
+  <!-- rails, splaying toward the viewer -->
+  <g fill="#E66A7E" fill-opacity="1">
+    <rect x="364" y="842" width="296" height="20" rx="6"/>
+    <rect x="336" y="912" width="352" height="24" rx="7"/>
+    <rect x="302" y="992" width="420" height="28" rx="8"/>
+  </g>
+  <g fill="#F6B9C3" >
+    <path d="M392 790 L420 790 L330 1024 L282 1024 Z"/>
+    <path d="M604 790 L632 790 L742 1024 L694 1024 Z"/>
+  </g>
+  <!-- train front -->
+  <path fill="#FFFFFF" d="M292 760 L292 330 C292 236 352 176 446 176 L578 176 C672 176 732 236 732 330 L732 760 C732 782 714 800 692 800 L332 800 C310 800 292 782 292 760 Z"/>
+  <rect x="402" y="214" width="220" height="40" rx="20" fill="#C8122E"/>
+  <rect x="338" y="290" width="348" height="230" rx="48" fill="#2A0A10"/>
+  <circle cx="394" cy="640" r="40" fill="#E31837"/>
+  <circle cx="630" cy="640" r="40" fill="#E31837"/>
+  <rect x="452" y="620" width="120" height="40" rx="20" fill="#2A0A10" opacity="0.18"/>
+  <rect x="352" y="724" width="320" height="22" rx="11" fill="#2A0A10" opacity="0.18"/>
+</svg>
