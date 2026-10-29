@@ -52,7 +52,8 @@ struct SettingsView: View {
                 } header: {
                     Text("Times")
                 } footer: {
-                    Text("Live data provided by 511.org.")
+                    // 511's data agreement wants the credit linked, next to where the data shows.
+                    Text("Live data provided by [511.org](https://511.org).")
                 }
 
                 Section("Location") {
@@ -78,9 +79,13 @@ struct SettingsView: View {
                 } header: {
                     Text("About")
                 } footer: {
-                    Text("© \(Self.currentYear) Michael Yu")
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.top, 8)
+                    VStack(spacing: 6) {
+                        Text("An independent app, not affiliated with or endorsed by Caltrain or the Peninsula Corridor Joint Powers Board.")
+                        Text("© \(Self.currentYear) Michael Yu")
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 8)
                 }
             }
             .navigationTitle("Settings")
