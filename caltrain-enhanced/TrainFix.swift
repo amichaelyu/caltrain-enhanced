@@ -18,11 +18,29 @@ struct TrainFix: Identifiable {
 
     var id: String { "\(run.trainNumber)-\(run.northbound ? "N" : "S")" }
 
+    /// The furthest each run has been drawn: the stop behind it and how far past. Keyed by
+    /// run, so tomorrow's train of the same number starts from its own origin.
+    private static var furthest: [String: (station: String, fraction: Double)] = [:]
+
     /// Nil before the train is due out of its origin: it isn't anywhere on the line yet.
     init?(run: RideItinerary, live: LiveTrain?, now: Date) {
         let estimate = RideEstimator.estimate(for: run, userLocation: nil, live: live, now: now)
-        guard let placement = estimate.placement(at: now) else { return nil }
+        guard var placement = estimate.placement(at: now) else { return nil }
         let stops = estimate.stops
+
+        // Trains don't reverse. A fresh fix landing behind where the last one was carried
+        // to holds the train there until it catches up, rather than drawing it backwards.
+        let key = "\(run.trainNumber)-\(run.northbound ? "N" : "S")-\(run.origin?.scheduled.timeIntervalSince1970 ?? 0)"
+        if let furthest = Self.furthest[key],
+           let index = stops.firstIndex(where: { $0.station.name == furthest.station }),
+           index < stops.count - 1,
+           (index, furthest.fraction) > (placement.segmentIndex, placement.fraction) {
+            placement = RidePlacement(segmentIndex: index, fraction: furthest.fraction, source: placement.source)
+        } else {
+            Self.furthest[key] = (stops[placement.segmentIndex].station.name, placement.fraction)
+        }
+
+
         let from = stops[placement.segmentIndex].station
         let to = stops[min(placement.segmentIndex + 1, stops.count - 1)].station
 

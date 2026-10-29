@@ -84,7 +84,7 @@ struct LiveTrain: Decodable {
     let longitude: Double?
     let stops: [LiveStop]
     /// When this position was current. The feed has no per-train time, so it's stamped
-    /// with when 511 produced the snapshot.
+    /// with the first snapshot that put the train here.
     var recordedAt: Date?
 
     var northbound: Bool { direction == "N" }
@@ -125,6 +125,12 @@ final class CaltrainLiveService: ObservableObject {
 
     @Published private(set) var feed: LiveFeed?
 
+    /// Each train's position and the first snapshot it appeared in. 511 restamps every
+    /// snapshot, but a train's position can sit unchanged in them for minutes; stamping it
+    /// with the latest one makes a stale fix look fresh, and the train is carried forward
+    /// from it, then snapped back when the next snapshot repeats it.
+    private var sightings: [String: (latitude: Double?, longitude: Double?, since: Date)] = [:]
+
     private var pollTask: Task<Void, Never>?
     /// Every screen that wants the feed right now. Polling runs while any of them do, so
     /// one tab disappearing can't switch it off under another that just appeared.
@@ -154,8 +160,15 @@ final class CaltrainLiveService: ObservableObject {
         guard let feed, now.timeIntervalSince(feed.fetched) < Self.maxAge else { return nil }
         guard var train = feed.trains.first(where: { $0.train == number && $0.northbound == northbound })
         else { return nil }
-        train.recordedAt = feed.updated
+        // A next stop due this long ago means 511 stopped updating the train, not that it's
+        // standing there: a train held that long gets fresh predictions.
+        if let due = train.stops.first?.expected, now.timeIntervalSince(due) > Self.maxAge { return nil }
+        train.recordedAt = sightings[Self.key(number, northbound: northbound)]?.since ?? feed.updated
         return train
+    }
+
+    private static func key(_ number: String, northbound: Bool) -> String {
+        "\(number)-\(northbound ? "N" : "S")"
     }
 
     /// Alerts in force right now. Unlike predictions these don't go stale with the
@@ -176,6 +189,16 @@ final class CaltrainLiveService: ObservableObject {
             if let holidays = feed.holidays {
                 CaltrainService.setHolidays(Set(holidays))
             }
+            var sightings: [String: (latitude: Double?, longitude: Double?, since: Date)] = [:]
+            for train in feed.trains {
+                let key = Self.key(train.train, northbound: train.northbound)
+                if let seen = self.sightings[key], seen.latitude == train.latitude, seen.longitude == train.longitude {
+                    sightings[key] = seen
+                } else {
+                    sightings[key] = (train.latitude, train.longitude, feed.updated)
+                }
+            }
+            self.sightings = sightings
             self.feed = feed
         } catch {
             // Keep the last snapshot; `maxAge` retires it if the outage lasts.
